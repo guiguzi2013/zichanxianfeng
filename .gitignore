@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+data/
+*.db
+
+# Node
+node_modules/
+dist/
+*.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# 部署
+deploy/.env
+deploy/certbot-www/
+deploy/certbot-certs/
+
+# 报告与上传产物
+backend/data/
+backend/reports/
+backend/uploads/

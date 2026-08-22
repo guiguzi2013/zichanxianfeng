@@ -1,0 +1,7 @@
+"""Alembic 迁移脚本目录
+
+初始化迁移：
+  cd backend
+  alembic revision --autogenerate -m "init tables"
+  alembic upgrade head
+"""

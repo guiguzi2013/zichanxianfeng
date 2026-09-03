@@ -51,7 +51,7 @@ class ZxgkDataSource(JudicialDataSource):
                 return DataSourceResult(success=True, data=resp.json(), source=self.name, fetch_time=datetime.now().isoformat())
         except Exception as e:  # noqa: BLE001
             logger.warning("zxgk %s failed for %s: %s", url.split("/")[-1], keyword, e)
-            return self._unavailable(f"查询失败（{e.__class__.__name__}），建议人工核实")
+            return self._unavailable("暂未获取到司法信息，建议人工核实")
 
     async def search_execution(self, keyword: str) -> DataSourceResult:
         return await self._post(EXECUTION_API, keyword)

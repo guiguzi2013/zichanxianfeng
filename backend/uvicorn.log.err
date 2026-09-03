@@ -1,0 +1,5 @@
+INFO:root:前端已挂载：Q:\deepseek\zichanxianfeng\frontend\dist（单进程模式，访问 http://127.0.0.1:8000）
+INFO:     Started server process [15256]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)

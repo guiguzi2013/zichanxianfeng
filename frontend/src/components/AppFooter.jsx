@@ -13,7 +13,8 @@ export default function AppFooter() {
           <div className="footer-col-title">关于平台</div>
           <a onClick={go('/')}>平台介绍</a>
           <a onClick={go('/upload')}>智能尽调</a>
-          <a onClick={go('/compare')}>债权对比</a>
+          <a onClick={go('/valuation')}>土地厂房估价</a>
+          <a onClick={go('/valuation/commercial')}>商业房产估价</a>
           <a>用户协议</a>
           <a>隐私政策</a>
           <a>意见反馈</a>
@@ -29,21 +30,22 @@ export default function AppFooter() {
           <div className="footer-col-title">快捷导航</div>
           <a onClick={go('/')}>债权公告</a>
           <a onClick={go('/upload')}>智能尽调</a>
-          <a onClick={go('/compare')}>AMC 对比</a>
+          <a onClick={go('/valuation')}>土地厂房估价</a>
+          <a onClick={go('/valuation/commercial')}>商业房产估价</a>
           <a onClick={go('/tasks')}>我的任务</a>
           <a onClick={go('/admin')}>管理后台</a>
         </div>
         <div className="footer-col">
           <div className="footer-col-title">免责声明</div>
           <p style={{ lineHeight: 1.7 }}>
-            本平台为信息聚合与尽调分析工具，所有报告由系统基于公开信息和 AI 分析自动生成，仅供参考，不构成投资建议。
+            本平台为信息聚合与尽调分析工具，所有报告由系统基于公开信息和 系统分析自动生成，仅供参考，不构成投资建议。
           </p>
         </div>
       </div>
       <div className="footer-bottom">
         数据来源：国家企业信用信息公示系统 ｜ 中国执行信息公开网 ｜ 企查查 ｜ 用户提供
         <br />
-        Copyright ©2025-2026 资产先锋平台 版权所有 ｜ 不良资产尽调 · 智能决策
+        Copyright ©2025-2026 NPL CN 版权所有 ｜ 中国不良资产 · 尽调与投融资
       </div>
     </footer>
   )

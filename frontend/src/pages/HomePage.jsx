@@ -32,22 +32,25 @@ export default function HomePage() {
   const [keyword, setKeyword] = useState('')
 
   useEffect(() => {
+    // 分栏目请求，避免全部栏目混在一个 100 条里挤掉精选名额
     Promise.all([
-      client.get('/feed?page_size=100').catch(() => ({ data: { items: [] } })),
+      client.get('/feed?section=featured&page_size=100').catch(() => ({ data: { items: [] } })),
+      client.get('/feed?section=bargain&page_size=100').catch(() => ({ data: { items: [] } })),
+      client.get('/feed?section=notice&page_size=100').catch(() => ({ data: { items: [] } })),
       client.get('/notices').catch(() => ({ data: { notices: [] } })),
       dashboardApi.get().catch(() => ({ data: null })),
-    ]).then(([feedResp, noticeResp, dashResp]) => {
-      const grouped = {}
-      ;(feedResp.data?.items || []).forEach((item) => {
-        ;(grouped[item.section] = grouped[item.section] || []).push(item)
+    ]).then(([featResp, bargainResp, noticeResp, platNoticeResp, dashResp]) => {
+      setFeed({
+        featured: featResp.data?.items || [],
+        bargain: bargainResp.data?.items || [],
+        notice: noticeResp.data?.items || [],
       })
-      setFeed(grouped)
-      setNotices(noticeResp.data?.notices || [])
+      setNotices(platNoticeResp.data?.notices || [])
       setDash(dashResp.data)
     }).finally(() => setLoading(false))
   }, [])
 
-  const onSearch = () => navigate(keyword ? `/upload?q=${encodeURIComponent(keyword)}` : '/upload')
+  const onSearch = () => navigate(keyword ? `/search?q=${encodeURIComponent(keyword)}` : '/search')
 
   const featuredItems = (feed.featured || []).slice(0, 15)
   const bargainItems = (feed.bargain || []).slice(0, 6)
@@ -62,12 +65,12 @@ export default function HomePage() {
     { id: 'd6', title: '成都天府置业破产重整项目', summary: '成都天府置业有限公司破产重整债权，抵押物为高新区商业综合体。', tags: ['破产重整', '深度折扣'], source: '破产专区', detail: { claim_total: '25000万', debtor_name: '成都天府置业有限公司', guaranty_type: '抵押担保', collateral_type: '商业综合体', region: '四川-成都', discount: '3.0折', risk: 'high' } },
   ]
   const DEMO_BARGAIN = [
-    { id: 'b1', title: '恒大相关债权包拍卖（12笔债权总额超2.7亿元）', summary: '阿里资产平台值得关注的标的——恒大相关债权包拍卖，12笔债权总额超2.7亿元，起拍价9.9元到301元不等，其中一笔1.03亿元的债权起拍价仅99元，相当于不到一折。目前已有52人报名。这批全是未诉债权，买家拿到后需自行走法律途径实现权益，有一定门槛，但价格确实够低，属于典型的"以小博大"捡漏型标的。', tags: ['不到1折', '以小博大'], source: '阿里资产', detail: { claim_total: '2.7亿(12笔)', debtor_name: '恒大相关', guaranty_type: '—', collateral_type: '—', region: '—', discount: '不到1折', risk: 'medium', valuation: { conservative: '—', neutral: '—', optimistic: '—' }, recovery_cycle: '12-24个月', cautions: '未诉债权，需自行诉讼实现权益，门槛较高。', disposal_advice: '低价购入后集中诉讼催收，注意诉讼时效与成本。' } },
-    { id: 'b2', title: '某集团债权（阿里拍卖）', summary: '小额债权拍卖，本金10.15万元，起拍价406元。', tags: ['0.4折', '小额'], source: '阿里拍卖', detail: { claim_total: '10.15万', debtor_name: '某集团', guaranty_type: '信用', collateral_type: '无', region: '—', discount: '0.4折', risk: 'low' } },
-    { id: 'b3', title: '某建材商行信用卡债权', summary: '信用卡不良债权，本金8.60万元，起拍价344元。', tags: ['0.4折', '小额'], source: '阿里拍卖', detail: { claim_total: '8.60万', debtor_name: '某建材商行', guaranty_type: '信用', collateral_type: '无', region: '—', discount: '0.4折', risk: 'low' } },
-    { id: 'b4', title: '某贸易公司担保债权', summary: '小额担保债权，本金15.0万元，起拍价750元。', tags: ['0.5折', '小额'], source: '阿里拍卖', detail: { claim_total: '15.0万', debtor_name: '某贸易公司', guaranty_type: '保证', collateral_type: '无', region: '—', discount: '0.5折', risk: 'low' } },
-    { id: 'b5', title: '某餐饮个体户经营贷款债权', summary: '个体经营贷款不良债权，本金5.80万元，起拍价348元。', tags: ['0.6折', '小额'], source: '阿里拍卖', detail: { claim_total: '5.80万', debtor_name: '某餐饮个体户', guaranty_type: '信用', collateral_type: '无', region: '—', discount: '0.6折', risk: 'low' } },
-    { id: 'b6', title: '某物流个体户经营贷债权', summary: '个体经营贷款不良债权，本金11.8万元，起拍价708元，折扣0.6折。', tags: ['0.6折', '小额'], source: '阿里拍卖', detail: { claim_total: '11.80万', debtor_name: '某物流个体户', guaranty_type: '信用', collateral_type: '无', region: '—', discount: '0.6折', risk: 'low' } },
+    { id: 'b1', title: '恒大相关债权包拍卖（12笔债权总额超2.7亿元）', summary: '阿里资产平台值得关注的标的——恒大相关债权包拍卖，12笔债权总额超2.7亿元，起拍价9.9元到301元不等，其中一笔1.03亿元的债权起拍价仅99元，相当于不到一折。目前已有52人报名。这批全是未诉债权，买家拿到后需自行走法律途径实现权益，有一定门槛，但价格确实够低，属于典型的"以小博大"捡漏型标的。', tags: ['不到1折', '以小博大'], source: '阿里资产', detail: { claim_total: '2.7亿(12笔)', debtor_name: '恒大相关', guaranty_type: '—', collateral_type: '—', region: '—', discount: '不到1折', listing_price: '9.9元起', risk: 'medium', valuation: { conservative: '—', neutral: '—', optimistic: '—' }, recovery_cycle: '12-24个月', cautions: '未诉债权，需自行诉讼实现权益，门槛较高。', disposal_advice: '低价购入后集中诉讼催收，注意诉讼时效与成本。' } },
+    { id: 'b2', title: '某集团债权（阿里拍卖）', summary: '小额债权拍卖，本金10.15万元，起拍价406元。', tags: ['0.4折', '小额'], source: '阿里拍卖', detail: { claim_total: '10.15万', debtor_name: '某集团', guaranty_type: '信用', collateral_type: '无', region: '—', discount: '0.4折', listing_price: '406元', risk: 'low' } },
+    { id: 'b3', title: '某建材商行信用卡债权', summary: '信用卡不良债权，本金8.60万元，起拍价344元。', tags: ['0.4折', '小额'], source: '阿里拍卖', detail: { claim_total: '8.60万', debtor_name: '某建材商行', guaranty_type: '信用', collateral_type: '无', region: '—', discount: '0.4折', listing_price: '344元', risk: 'low' } },
+    { id: 'b4', title: '某贸易公司担保债权', summary: '小额担保债权，本金15.0万元，起拍价750元。', tags: ['0.5折', '小额'], source: '阿里拍卖', detail: { claim_total: '15.0万', debtor_name: '某贸易公司', guaranty_type: '保证', collateral_type: '无', region: '—', discount: '0.5折', listing_price: '750元', risk: 'low' } },
+    { id: 'b5', title: '某餐饮个体户经营贷款债权', summary: '个体经营贷款不良债权，本金5.80万元，起拍价348元。', tags: ['0.6折', '小额'], source: '阿里拍卖', detail: { claim_total: '5.80万', debtor_name: '某餐饮个体户', guaranty_type: '信用', collateral_type: '无', region: '—', discount: '0.6折', listing_price: '348元', risk: 'low' } },
+    { id: 'b6', title: '某物流个体户经营贷债权', summary: '个体经营贷款不良债权，本金11.8万元，起拍价708元，折扣0.6折。', tags: ['0.6折', '小额'], source: '阿里拍卖', detail: { claim_total: '11.80万', debtor_name: '某物流个体户', guaranty_type: '信用', collateral_type: '无', region: '—', discount: '0.6折', listing_price: '708元', risk: 'low' } },
   ]
   const DEMO_NOTICES = [
     { id: 'n1', title: '工商银行浙江省分行转让不良贷款债权，涉及本金3.2亿元', summary: '包含15户对公不良贷款，抵押物涵盖杭州、宁波、温州等地商业物业及工业厂房。', source: '消费日报A16版' },
@@ -106,11 +109,11 @@ export default function HomePage() {
   ]).map((a, i) => ({ key: i, ...a }))
 
   const auctionColumns = [
-    { title: '平台', dataIndex: 'platform', key: 'platform' },
-    { title: '新上拍', dataIndex: 'on_auction', key: 'on_auction', align: 'right' },
-    { title: '成交', dataIndex: 'sold', key: 'sold', align: 'right' },
-    { title: '成交率', dataIndex: 'sold_rate', key: 'sold_rate', align: 'right', render: (v) => `${v}%` },
-    { title: '成交额(亿)', dataIndex: 'amount', key: 'amount', align: 'right', render: (v) => `${v}` },
+    { title: '平台', dataIndex: 'platform', key: 'platform', width: 100 },
+    { title: '新上拍', dataIndex: 'on_auction', key: 'on_auction', align: 'right', width: 80 },
+    { title: '成交', dataIndex: 'sold', key: 'sold', align: 'right', width: 70 },
+    { title: '成交率', dataIndex: 'sold_rate', key: 'sold_rate', align: 'right', width: 80, render: (v) => `${v}%` },
+    { title: '成交额(亿)', dataIndex: 'amount', key: 'amount', align: 'right', width: 90, render: (v) => `${v}` },
   ]
 
   const amcNational = (dash?.amc?.national || [
@@ -142,63 +145,150 @@ export default function HomePage() {
   )
 
   // 精选债权卡片（查看详情即可，尽调入口在详情页/列表批量尽调）
+  // 来源标签（阿里资产/京东拍卖等）不在卡片展示，仅内页展示
+  const SOURCE_TAGS = ['阿里资产', '阿里拍卖', '京东拍卖', '京东资产', '淘宝', '破产专区']
+  // 抵押物智能判断：优先 detail 字段，其次从标题/摘要识别大类（商业楼/土地厂房/住宅房产/仓储物流）
+  const guessCollateral = (item) => {
+    const d = item.detail || {}
+    if (d.collateral_type && d.collateral_type !== '无' && d.collateral_type !== '—') return d.collateral_type
+    const text = `${item.title || ''} ${item.summary || ''}`
+    const m = text.match(/抵押物[为是]?[^，。；,;]{0,24}/)
+    const scope = m ? m[0] : text
+    const rules = [
+      ['商业楼', /商业|商铺|写字楼|商服|综合体|商场|物业|底商/],
+      ['土地厂房', /土地|厂房|工业|车间|园区|仓储|仓库|库房/],
+      ['住宅房产', /住宅|公寓|住房|别墅|房产|房屋/],
+    ]
+    for (const [label, re] of rules) {
+      if (re.test(scope)) return label
+    }
+    return ''
+  }
+  // 债权本金：优先 detail，其次从标题/摘要提取金额（本金/债权金额/万元/亿元）
+  const guessClaimTotal = (item) => {
+    const d = item.detail || {}
+    if (d.claim_total) return d.claim_total
+    const text = `${item.title || ''} ${item.summary || ''}`
+    const m = text.match(/本金\s*[:：]?\s*([\d,]+\.?\d*)\s*(亿元|万元|亿|万|元)/)
+    if (m) return m[1] + (m[2] === '亿元' ? '亿' : m[2] === '万元' ? '万' : m[2])
+    const m2 = text.match(/([\d,]+\.?\d*)\s*(亿元|万元)/)
+    if (m2) return m2[1] + (m2[2] === '亿元' ? '亿' : '万')
+    return ''
+  }
+  // 金额显示优化：大额"139109.0万" → "13.91亿"
+  const fmtMoney = (s) => {
+    if (!s) return s
+    const m = String(s).match(/^([\d.]+)(万|元|亿)$/)
+    if (m && m[2] === '万' && parseFloat(m[1]) >= 10000) {
+      const v = (parseFloat(m[1]) / 10000).toFixed(2).replace(/\.?0+$/, '')
+      return `${v}亿`
+    }
+    return s
+  }
+  // 地区标签精简为城市名（2026-09-02 用户要求：卡片只写城市名，不然长地区会拐行）
+  // "青岛市黄岛区"→"青岛"、"青岛市胶州市水岸府邸东区小区"→"胶州"、"衡阳市"→"衡阳"
+  const shortCityName = (s) => {
+    if (!s) return ''
+    const t = String(s).trim()
+    const cities = t.match(/([\u4e00-\u9fa5]{2,4})市/g)
+    if (cities && cities.length) {
+      return cities[cities.length - 1].replace('市', '')
+    }
+    const p = t.match(/(?:省|自治区|特别行政区)\s*([\u4e00-\u9fa5]{2,6})/)
+    if (p) return p[1]
+    return t.length > 5 ? t.slice(0, 5) : t
+  }
+  // 精选债权卡片 v4（按参考图 2026-08-31）：债权金额右上角 / 标题蓝色 / 摘要中间≤3行 / 抵押物右下角 / 起拍价红色
   const renderFeaturedCard = (item) => {
     const d = item.detail || {}
-    const riskColor = d.risk === 'high' ? 'red' : d.risk === 'medium' ? 'orange' : 'green'
-    const riskTag = d.risk ? (
-      <Tag color={riskColor} style={{ position: 'absolute', top: 10, right: 10, marginInlineEnd: 0, zIndex: 1 }}>
-        {d.risk === 'high' ? '高风险' : d.risk === 'medium' ? '中风险' : '低风险'}
+    const bizTags = (item.tags || [])
+      .filter((t) => !SOURCE_TAGS.some((s) => t.startsWith(s)))
+      .slice(0, 2)
+      .map((t) => (/市|区|县|省|自治/.test(t) && !/债权|招商|捡漏|拍卖|资产|转让|破产/.test(t) ? shortCityName(t) : t))
+    const collateral = guessCollateral(item)
+    const claimTotal = guessClaimTotal(item)
+    // 精简标题：后端 short_title 优先，否则前端去【】前缀
+    const shortTitle = d.short_title || (item.title || '').replace(/^【[^】]*】/, '')
+    // 状态徽标：进行中=橙，即将开始=蓝
+    const st = d.auction_status || ''
+    const stTag = st ? (
+      <Tag color={st === '进行中' ? 'orange' : 'blue'} style={{ marginInlineEnd: 0 }}>
+        {st}
       </Tag>
     ) : null
+    const price = d.listing_price || ''
     return (
       <Col xs={24} md={12} lg={8} key={item.id}>
-        <div className="kpi-card" style={{ cursor: 'pointer', height: '100%', display: 'flex', flexDirection: 'column', gap: 6, position: 'relative' }}
+        <div className="kpi-card" style={{ cursor: 'pointer', height: '100%', display: 'flex', flexDirection: 'column', gap: 6, position: 'relative', paddingBottom: 14 }}
           onClick={() => navigate(`/asset/${item.id}`)}>
-          {riskTag}
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', paddingRight: 70 }}>
-            {(item.tags || []).slice(0, 2).map((t, i) => <Tag key={i} color="blue">{t}</Tag>)}
-            {d.region && <span style={{ fontSize: 11, color: 'var(--text-weak)' }}>{d.region}</span>}
+          {/* 第一行：标签(左) + 债权金额(右)，同一水平线平行（2026-09-02 用户要求，防乱/拐行） */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', flex: 1, minWidth: 0 }}>
+              {bizTags.map((t, i) => <Tag key={i} color="blue">{t}</Tag>)}
+              {stTag}
+            </div>
+            {claimTotal && (
+              <div style={{ flexShrink: 0, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                <span style={{ fontSize: 11, color: 'var(--text-weak)' }}>债权金额 </span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--danger)' }}>{fmtMoney(claimTotal)}</span>
+              </div>
+            )}
           </div>
-          <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-main)', paddingRight: 70 }}>{item.title}</div>
-          <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6, flex: 1 }}>
-            {(item.summary || '暂无简介').slice(0, 60)}{(item.summary || '').length > 60 ? '…' : ''}
+          {/* 标题：黑色，两行 */}
+          <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-main)', lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{shortTitle || item.title}</div>
+          {/* 摘要：中间位置，细体小字 ≤3 行 */}
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6, flex: 1, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+            {item.summary || '暂无简介'}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12, flexWrap: 'wrap' }}>
-            {d.claim_total && <span>本金 <Text strong style={{ color: 'var(--danger)' }}>{d.claim_total}</Text></span>}
-            {d.discount && <span>折扣 <Text strong style={{ color: 'var(--danger)' }}>{d.discount}</Text></span>}
-            {d.collateral_type && d.collateral_type !== '无' && <span>抵押物 <Text strong>{d.collateral_type}</Text></span>}
+          {/* 底部分散：起拍价（左）+ 抵押物（右） */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 'auto', paddingTop: 4, gap: 8 }}>
+            {price && (
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                起拍价 <Text strong style={{ fontSize: 18, fontWeight: 700, color: 'var(--danger)' }}>{fmtMoney(price)}</Text>
+              </span>
+            )}
+            {collateral && (
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)', textAlign: 'right' }}>抵押物 <Text style={{ color: 'var(--text-main)' }}>{collateral}</Text></span>
+            )}
           </div>
         </div>
       </Col>
     )
   }
 
-  // 热门捡漏卡片（内容参考"恒大债权包"模板：起拍价/报名/分析；无尽调入口）
+  // 热门捡漏卡片（内容参考"恒大债权包"模板；挂牌价突出吸引眼球；本金/折扣在右上角省行）
   const renderBargainCard = (item) => {
     const d = item.detail || {}
-    const riskColor = d.risk === 'high' ? 'red' : d.risk === 'medium' ? 'orange' : 'green'
-    const riskTag = d.risk ? (
-      <Tag color={riskColor} style={{ position: 'absolute', top: 10, right: 10, marginInlineEnd: 0, zIndex: 1 }}>
-        {d.risk === 'high' ? '高风险' : d.risk === 'medium' ? '中风险' : '低风险'}
-      </Tag>
-    ) : null
+    // 2026-09-02：应收账款类债权右上角写"应收账款"而非"本金"
+    const isReceivable = /应收/.test(`${item.title || ''} ${item.summary || ''} ${d.collateral_desc || ''}`)
+    const amountLabel = isReceivable ? '应收账款' : '本金'
     return (
       <Col xs={24} md={12} key={item.id}>
         <div className="kpi-card" style={{ cursor: 'pointer', height: '100%', display: 'flex', flexDirection: 'column', gap: 6, position: 'relative' }}
           onClick={() => navigate(`/asset/${item.id}`)}>
-          {riskTag}
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', paddingRight: 70 }}>
+          {/* 本金/应收账款/折扣：右上角（红色小字，一行）*/}
+          <div style={{ position: 'absolute', top: 14, right: 14, textAlign: 'right', zIndex: 1 }}>
+            <span style={{ fontSize: 12, color: 'var(--danger)' }}>{amountLabel} <Text strong style={{ fontSize: 12 }}>{d.claim_total}</Text></span>
+            {d.discount && <span style={{ fontSize: 12, color: 'var(--danger)', marginLeft: 8 }}>折扣 <Text strong style={{ fontSize: 12 }}>{d.discount}</Text></span>}
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', paddingRight: 90 }}>
             <Tag color="orange" icon={<FireOutlined />}>捡漏</Tag>
+            {/* 2026-09-02：折扣单独成标签 */}
+            {d.discount && <Tag color="red">折扣 {d.discount}</Tag>}
             {(item.tags || []).slice(0, 2).map((t, i) => <Tag key={i} color="blue">{t}</Tag>)}
           </div>
-          <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--text-main)', lineHeight: 1.4, paddingRight: 70 }}>{item.title}</div>
+          <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--text-main)', lineHeight: 1.4, paddingRight: 90 }}>{item.title}</div>
           <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.7, flex: 1, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
             {item.summary || '暂无简介'}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12, flexWrap: 'wrap' }}>
-            {d.claim_total && <span>本金 <Text strong style={{ color: 'var(--danger)' }}>{d.claim_total}</Text></span>}
-            {d.discount && <span>折扣 <Text strong style={{ color: 'var(--danger)' }}>{d.discount}</Text></span>}
-          </div>
+          {/* 挂牌价/起拍价突出展示：大号红色，低价吸引眼球 */}
+          {d.listing_price && (
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 2 }}>
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>挂牌价</span>
+              <span style={{ fontSize: 22, fontWeight: 700, color: 'var(--danger)', lineHeight: 1.2 }}>{d.listing_price}</span>
+              <span style={{ fontSize: 11, color: 'var(--text-weak)' }}>起拍</span>
+            </div>
+          )}
         </div>
       </Col>
     )
@@ -223,10 +313,10 @@ export default function HomePage() {
       {/* ===== Hero 区：搜索框 banner + 四个业务入口小块（白底，移入 banner 内下方）===== */}
       <div className="hero-section">
         <div className="page-container" style={{ paddingBottom: 12 }}>
-          <div className="hero-title">不良资产智能尽调平台</div>
-          <div className="hero-subtitle">债权筛选 · 债务人信息查询 · 综合研判 · 一键生成尽调报告</div>
+          <div className="hero-title">NPL中国</div>
+          <div className="hero-subtitle">中国不良资产 · 尽调与投融资平台 ｜ 债权筛选 · 债务人查询 · 综合研判 · 一键尽调报告</div>
           <div className="hero-search">
-            <Input size="large" prefix={<SearchOutlined />} placeholder="搜索债务企业 / 债权 / 抵押物（回车进入尽调）"
+            <Input size="large" prefix={<SearchOutlined />} placeholder="搜索债权 / 债务人 / 抵押物 / 地区"
               value={keyword} onChange={(e) => setKeyword(e.target.value)} onPressEnter={onSearch} style={{ maxWidth: 560 }} />
             <Button size="large" type="primary" onClick={onSearch}>搜索</Button>
           </div>
@@ -236,17 +326,17 @@ export default function HomePage() {
               {[
                 { icon: <RobotOutlined />, label: '智能尽调', desc: '单笔/批量债权尽调', path: '/upload', color: '#1a5fb4' },
                 { icon: <FundOutlined />, label: '财产线索', desc: '债务人/担保人财产调查', path: '/property-clues', color: '#389e0d' },
-                { icon: <SwapOutlined />, label: '债权对比', desc: '2-4笔债权横向对比', path: '/compare', color: '#d48806' },
-                { icon: <BankOutlined />, label: '捡漏专区', desc: '破产清算/重整债权', path: '/debts?feature=pick', color: '#722ed1' },
+                { icon: <SwapOutlined />, label: '土地厂房估价', desc: '成本法', path: '/valuation', color: '#d48806' },
+                { icon: <BankOutlined />, label: '商业房产估价', desc: '市场价·取最低价', path: '/valuation/commercial', color: '#722ed1' },
               ].map((e) => (
                 <Col xs={12} md={6} key={e.label}>
                   <div className="kpi-card" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', background: '#fff' }} onClick={() => navigate(e.path)}>
                     <div style={{ width: 36, height: 36, borderRadius: 8, background: `${e.color}1A`, color: e.color, fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       {e.icon}
                     </div>
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: 13 }}>{e.label}</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-weak)' }}>{e.desc}</div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.label}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-weak)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.desc}</div>
                     </div>
                   </div>
                 </Col>
@@ -307,10 +397,10 @@ export default function HomePage() {
             </div>
           </Col>
 
-          {/* 最新债权公告（"更多"在版块下方）*/}
+          {/* 最新债权公告（"更多"在右上角）*/}
           <Col xs={24} md={8}>
             <div className="section-card" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-              <SectionTitle icon={<FileTextOutlined style={{ color: 'var(--primary)' }} />} title="最新债权公告" />
+              <SectionTitle icon={<FileTextOutlined style={{ color: 'var(--primary)' }} />} title="最新债权公告" morePath="/debts?section=notice" />
               <div style={{ flex: 1 }}>
                 {notices2.map((n, i) => (
                   <div key={n.id || i} style={{ padding: '8px 4px', borderBottom: i < notices2.length - 1 ? '1px solid var(--border-light)' : 'none', cursor: 'pointer' }}
@@ -323,9 +413,6 @@ export default function HomePage() {
                   </div>
                 ))}
               </div>
-              <div style={{ textAlign: 'right', marginTop: 8 }}>
-                <span className="section-more" style={{ fontSize: 13, color: 'var(--primary)', cursor: 'pointer' }} onClick={() => navigate('/notices')}>更多 →</span>
-              </div>
             </div>
           </Col>
         </Row>
@@ -336,6 +423,7 @@ export default function HomePage() {
             <div className="section-card" style={{ height: '100%' }}>
               <SectionTitle icon={<DatabaseOutlined style={{ color: 'var(--primary)' }} />} title="拍卖平台成交" />
               <Table size="small" columns={auctionColumns} dataSource={auctionData} pagination={false}
+                scroll={{ x: 'max-content' }}
                 locale={{ emptyText: '暂无数据，请在管理后台录入' }} />
               <div style={{ fontSize: 11, color: 'var(--text-weak)', marginTop: 8 }}>合计上拍 {auctionData.reduce((s, a) => s + a.on_auction, 0).toLocaleString()} ｜ 成交率 68% ｜ 数据来源：各拍卖平台（模拟）</div>
             </div>
@@ -352,11 +440,14 @@ export default function HomePage() {
           </Col>
         </Row>
 
-        {/* ===== 精选债权（重点版块，"更多"在右下角）===== */}
+        {/* ===== 精选债权（重点版块，"更多"在右上角）===== */}
         <div className="section-card" style={{ marginBottom: 20 }}>
-          <div className="section-title">
-            精选债权
-            <span style={{ fontSize: 12, color: 'var(--text-weak)', fontWeight: 400, marginLeft: 8 }}>共 {featured.length} 条</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <span className="section-title" style={{ marginBottom: 0 }}>
+              精选债权
+              <span style={{ fontSize: 12, color: 'var(--text-weak)', fontWeight: 400, marginLeft: 8 }}>共 {featured.length} 条</span>
+            </span>
+            <span className="section-more" style={{ fontSize: 13, color: 'var(--primary)', cursor: 'pointer' }} onClick={() => navigate('/debts')}>更多 →</span>
           </div>
           {loading ? (
             <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
@@ -365,23 +456,20 @@ export default function HomePage() {
               {featured.map((item) => renderFeaturedCard(item))}
             </Row>
           )}
-          <div style={{ textAlign: 'right', marginTop: 12 }}>
-            <span className="section-more" style={{ fontSize: 13, color: 'var(--primary)', cursor: 'pointer' }} onClick={() => navigate('/debts')}>更多 →</span>
-          </div>
         </div>
 
-        {/* ===== 热门捡漏（"更多"在右下角）===== */}
+        {/* ===== 热门捡漏（"更多"在右上角）===== */}
         <div className="section-card" style={{ borderColor: '#ffd591', marginBottom: 20 }}>
-          <div className="section-title">
-            <FireOutlined style={{ color: '#fa541c', marginRight: 6 }} />热门捡漏
-            <span style={{ fontSize: 12, color: 'var(--text-weak)', fontWeight: 400, marginLeft: 8 }}>低本金 · 深折扣 · 适合个人投资者</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <span className="section-title" style={{ marginBottom: 0 }}>
+              <FireOutlined style={{ color: '#fa541c', marginRight: 6 }} />热门捡漏
+              <span style={{ fontSize: 12, color: 'var(--text-weak)', fontWeight: 400, marginLeft: 8 }}>低本金 · 深折扣 · 适合个人投资者</span>
+            </span>
+            <span className="section-more" style={{ fontSize: 13, color: 'var(--primary)', cursor: 'pointer' }} onClick={() => navigate('/debts?feature=pick')}>更多 →</span>
           </div>
           <Row gutter={[16, 16]}>
             {bargain.map((item) => renderBargainCard(item))}
           </Row>
-          <div style={{ textAlign: 'right', marginTop: 12 }}>
-            <span className="section-more" style={{ fontSize: 13, color: 'var(--primary)', cursor: 'pointer' }} onClick={() => navigate('/debts?feature=pick')}>更多 →</span>
-          </div>
         </div>
       </div>
     </>

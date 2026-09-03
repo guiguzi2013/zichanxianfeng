@@ -8,10 +8,11 @@ export const useClaimDraftStore = create(
     (set) => ({
       claims: [],
       warnings: [], // 输入质量提醒（来自导入接口的 input_warnings）
-      setClaims: (claims, warnings) => set({ claims, warnings: warnings || [] }),
+      dedup: null,  // 重复检测信息 {removed, file_duplicate, batch_dups, existing_dups}
+      setClaims: (claims, warnings, dedup) => set({ claims, warnings: warnings || [], dedup: dedup || null }),
       updateClaim: (id, patch) =>
         set((s) => ({ claims: s.claims.map((c) => (c.id === id ? { ...c, ...patch } : c)) })),
-      clear: () => set({ claims: [], warnings: [] }),
+      clear: () => set({ claims: [], warnings: [], dedup: null }),
     }),
     { name: 'zxf-claim-draft' }
   )

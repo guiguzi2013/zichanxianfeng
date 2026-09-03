@@ -20,6 +20,7 @@ class UserOut(BaseModel):
     username: str
     nickname: str | None
     role: str
+    land_price_perm: bool = False
     points: int
     created_at: datetime | None = None
 

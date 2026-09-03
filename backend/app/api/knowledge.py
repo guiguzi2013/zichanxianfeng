@@ -27,6 +27,7 @@ ALLOWED_EXTS = {".docx", ".doc", ".pdf", ".txt", ".md", ".jpg", ".jpeg", ".png",
 
 
 class LegalDocCreate(BaseModel):
+    category: str | None = None
     title: str = Field(min_length=1, max_length=300)
     doc_no: str | None = None
     issuer: str | None = None
@@ -40,6 +41,7 @@ class LegalDocCreate(BaseModel):
 
 
 class CaseCreate(BaseModel):
+    category: str | None = None
     title: str = Field(min_length=1, max_length=300)
     scenario: str | None = None
     tags: str | None = None
@@ -53,6 +55,8 @@ class CaseCreate(BaseModel):
 def _legal_to_dict(d: LegalDoc) -> dict:
     return {
         "id": d.id,
+        "category": d.category,
+        "source_type": d.source_type or "manual",
         "title": d.title,
         "doc_no": d.doc_no,
         "issuer": d.issuer,
@@ -71,6 +75,8 @@ def _legal_to_dict(d: LegalDoc) -> dict:
 def _case_to_dict(c: KnowledgeCase) -> dict:
     return {
         "id": c.id,
+        "category": c.category,
+        "source_type": c.source_type or "manual",
         "title": c.title,
         "scenario": c.scenario,
         "tags": c.tags,
@@ -86,15 +92,116 @@ def _case_to_dict(c: KnowledgeCase) -> dict:
 
 # ---------------- 规范性文件 ----------------
 
+# 知识自动分类关键词表（统一粘贴文字框录入时按内容识别分类）
+_LEGAL_CAT_RULES = [
+    ("术语词典", ["术语", "名词解释", "什么是", "词典"]),
+    ("尽调规则", ["评级", "评分标准", "分档", "覆盖比例", "处置关注点", "尽调框架", "输出格式"]),
+    ("土地估价", ["M0", "M1", "M2", "M3", "工业用地", "土地性质", "划拨", "出让金", "容积率", "建安造价"]),
+    ("商业估价", ["商业房产", "商铺", "写字楼", "商业氛围", "地段", "商圈", "出租率"]),
+    ("平台规范", ["禁止编造", "平台铁律", "内部规范", "法规引用"]),
+    ("行业常识", ["覆盖", "倒找", "倒挂", "计量单位", "计息", "追偿", "清偿顺位", "优先受偿", "以物抵债"]),
+    ("尽调法规", ["第", "条", "规定", "解释", "法", "民诉", "民法典", "刑法", "破产法"]),
+]
+_CASE_CAT_RULES = [
+    ("财产线索", ["财产线索", "线索", "资产", "应收", "到期债权", "调查"]),
+    ("尽调案例", ["案例", "执行", "终本", "拒执", "抵押", "保证", "一人公司", "流拍", "占用"]),
+]
+
+
+def _classify_text(text: str, is_case: bool = False) -> str:
+    """按关键词自动识别知识分类（用于统一粘贴框录入）"""
+    rules = _CASE_CAT_RULES if is_case else _LEGAL_CAT_RULES
+    for cat, kws in rules:
+        for kw in kws:
+            if kw in text:
+                return cat
+    return "其他"
+
+
+@router.post("/knowledge/classify", response_model=ApiResponse)
+def classify_knowledge(payload: dict, admin: User = Depends(require_admin)):
+    """自动识别粘贴文本所属知识分类（仅管理员）"""
+    text = str(payload.get("text") or "")
+    is_case = bool(payload.get("is_case"))
+    if not text.strip():
+        raise err("请输入内容")
+    return ok({"category": _classify_text(text, is_case)})
+
+
+@router.get("/knowledge/categories", response_model=ApiResponse)
+
+@router.get("/knowledge/categories", response_model=ApiResponse)
+def list_categories(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """知识分类清单（动态聚合，含各分类条目数）；仅管理员可访问"""
+    from sqlalchemy import func
+
+    legal_rows = db.execute(
+        select(LegalDoc.category, func.count()).group_by(LegalDoc.category)
+    ).all()
+    case_rows = db.execute(
+        select(KnowledgeCase.category, func.count()).group_by(KnowledgeCase.category)
+    ).all()
+    return ok({
+        "legal_categories": [
+            {"name": c, "count": n} for c, n in legal_rows if c
+        ],
+        "case_categories": [
+            {"name": c, "count": n} for c, n in case_rows if c
+        ],
+    })
+
+
+@router.put("/admin/knowledge/categories", response_model=ApiResponse)
+def rename_category(req: dict, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """重命名知识分类（旧名 → 新名，应用于 legal_docs 与 knowledge_cases 两表）"""
+    old = (req.get("old") or "").strip()
+    new = (req.get("new") or "").strip()
+    if not old or not new:
+        raise err("请提供旧分类名与新分类名")
+    if old == new:
+        raise err("新旧分类名相同")
+    # 统计受影响条目
+    n_legal = db.query(LegalDoc).filter(LegalDoc.category == old).count()
+    n_case = db.query(KnowledgeCase).filter(KnowledgeCase.category == old).count()
+    if n_legal == 0 and n_case == 0:
+        raise err(f"分类「{old}」不存在")
+    db.query(LegalDoc).filter(LegalDoc.category == old).update({"category": new})
+    db.query(KnowledgeCase).filter(KnowledgeCase.category == old).update({"category": new})
+    write_audit_log(db, admin.id, "knowledge_category", "rename",
+                    entity_id=None, change_summary={"old": old, "new": new})
+    db.commit()
+    return ok({"renamed": n_legal + n_case}, f"分类「{old}」已重命名为「{new}」（{n_legal + n_case} 条）")
+
+
+@router.delete("/admin/knowledge/categories/{name}", response_model=ApiResponse)
+def delete_category(name: str, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """删除知识分类（仅允许删除空分类；非空需先重命名或迁移条目）"""
+    from urllib.parse import unquote
+    name = unquote(name).strip()
+    n_legal = db.query(LegalDoc).filter(LegalDoc.category == name).count()
+    n_case = db.query(KnowledgeCase).filter(KnowledgeCase.category == name).count()
+    if n_legal + n_case > 0:
+        raise err(f"分类「{name}」下有 {n_legal + n_case} 条知识，不能直接删除（可重命名或先移动条目）")
+    write_audit_log(db, admin.id, "knowledge_category", "delete",
+                    entity_id=None, change_summary={"name": name})
+    db.commit()
+    return ok(None, f"分类「{name}」已删除（空分类）")
+
+
 @router.get("/knowledge/legal-docs", response_model=ApiResponse)
-def list_legal_docs(db: Session = Depends(get_db)):
-    docs = db.scalars(select(LegalDoc).order_by(LegalDoc.id.desc()).limit(500)).all()
+def list_legal_docs(category: str | None = None, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    q = select(LegalDoc)
+    if category:
+        q = q.where(LegalDoc.category == category)
+    docs = db.scalars(q.order_by(LegalDoc.id.desc()).limit(500)).all()
     return ok({"docs": [_legal_to_dict(d) for d in docs]})
 
 
 @router.post("/admin/legal-docs", response_model=ApiResponse)
 def create_legal_doc(req: LegalDocCreate, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
-    doc = LegalDoc(**req.model_dump())
+    data = req.model_dump()
+    data["source_type"] = "manual"  # 文字录入 → 可编辑
+    doc = LegalDoc(**data)
     db.add(doc)
     write_audit_log(db, admin.id, "legal_doc", "create", entity_id=None, change_summary={"title": req.title, "status": req.status})
     db.commit()
@@ -107,6 +214,9 @@ def update_legal_doc(doc_id: int, req: LegalDocCreate, admin: User = Depends(req
     doc = db.get(LegalDoc, doc_id)
     if doc is None:
         raise err("规范性文件不存在", http_status=404)
+    # 文档上传的条目只读：仅可删除，不可修改
+    if (doc.source_type or "manual") == "upload":
+        raise err("该条录为文档上传生成（只读），不可编辑；如需修改请删除后重新录入/上传")
     before = {"title": doc.title, "status": doc.status}
     for k, v in req.model_dump().items():
         setattr(doc, k, v)
@@ -130,14 +240,19 @@ def delete_legal_doc(doc_id: int, admin: User = Depends(require_admin), db: Sess
 # ---------------- 案例 ----------------
 
 @router.get("/knowledge/cases", response_model=ApiResponse)
-def list_cases(db: Session = Depends(get_db)):
-    cases = db.scalars(select(KnowledgeCase).order_by(KnowledgeCase.id.desc()).limit(500)).all()
+def list_cases(category: str | None = None, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    q = select(KnowledgeCase)
+    if category:
+        q = q.where(KnowledgeCase.category == category)
+    cases = db.scalars(q.order_by(KnowledgeCase.id.desc()).limit(500)).all()
     return ok({"cases": [_case_to_dict(c) for c in cases]})
 
 
 @router.post("/admin/knowledge-cases", response_model=ApiResponse)
 def create_case(req: CaseCreate, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
-    c = KnowledgeCase(**req.model_dump())
+    data = req.model_dump()
+    data["source_type"] = "manual"  # 文字录入 → 可编辑
+    c = KnowledgeCase(**data)
     db.add(c)
     write_audit_log(db, admin.id, "knowledge_case", "create", entity_id=None, change_summary={"title": req.title, "scenario": req.scenario})
     db.commit()
@@ -150,6 +265,9 @@ def update_case(case_id: int, req: CaseCreate, admin: User = Depends(require_adm
     c = db.get(KnowledgeCase, case_id)
     if c is None:
         raise err("案例不存在", http_status=404)
+    # 文档上传的条目只读：仅可删除，不可修改
+    if (c.source_type or "manual") == "upload":
+        raise err("该条录为文档上传生成（只读），不可编辑；如需修改请删除后重新录入/上传")
     before = {"title": c.title, "scenario": c.scenario}
     for k, v in req.model_dump().items():
         setattr(c, k, v)
@@ -240,6 +358,7 @@ async def upload_legal_doc(
     filename = (file.filename or "法规文件").rsplit(".", 1)[0][:120]
     doc = LegalDoc(
         title=filename,
+        source_type="upload",  # 文档上传 → 只读（仅可删）
         summary=(text or "")[:4000],
         note="由上传文件自动提取文本生成，请人工核对版本、文号、施行日期与效力状态。",
         tags="",
@@ -265,6 +384,7 @@ async def upload_case_doc(
     filename = (file.filename or "案例文档").rsplit(".", 1)[0][:120]
     c = KnowledgeCase(
         title=filename,
+        source_type="upload",  # 文档上传 → 只读（仅可删）
         scenario="待归类",
         tags="",
         keywords="",

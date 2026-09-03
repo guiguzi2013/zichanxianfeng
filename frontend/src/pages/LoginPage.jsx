@@ -25,10 +25,10 @@ export default function LoginPage() {
     <div style={{ display: 'flex', justifyContent: 'center', padding: '80px 16px', background: '#f5f7fa', minHeight: 'calc(100vh - 64px)' }}>
       <Card style={{ width: 400, boxShadow: '0 4px 12px rgba(0,0,0,.08)' }}>
         <Title level={3} style={{ textAlign: 'center', color: '#1a5fb4' }}>
-          资产先锋
+          NPL中国
         </Title>
         <Text type="secondary" style={{ display: 'block', textAlign: 'center', marginBottom: 24 }}>
-          不良资产信息聚合与 AI 尽调分析平台
+          中国不良资产 · 尽调与投融资平台
         </Text>
         <Form onFinish={onFinish} size="large">
           <Form.Item name="username" rules={[{ required: true, message: '请输入用户名' }]}>

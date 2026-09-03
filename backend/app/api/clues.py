@@ -3,17 +3,22 @@
 POST /api/clues/parse-judgment  上传判决书(Word/PDF/TXT) → 自动识别债务人/保证人/关联人
 POST /api/clues/verify-names    名称规则校验（免费离线，避免把错误名称发给企查查浪费积分）
 """
+import json
 import logging
 import os
 import re
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, Depends, File, UploadFile
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from ..config import get_settings
+from ..database import get_db
+from ..models import User
 from ..schemas.common import ApiResponse, err, ok
 from ..services.judgment_parser import extract_entities, verify_names
 from ..services.supplement_parser import extract_text_from_file
+from .deps import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/clues", tags=["clues"])
@@ -125,7 +130,7 @@ def _name_variants(name: str) -> list[str]:
 
 
 @router.post("/resolve-name", response_model=ApiResponse)
-async def resolve_name(req: ResolveNameRequest):
+async def resolve_name(req: ResolveNameRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """名称变体解析：材料中的名称查无此名时，依次尝试常见变体（缓存优先），找到现用名即停。
 
     每个变体约 8 积分（轻量模式，未缓存时），命中即停，最多 6 个变体。
@@ -150,6 +155,7 @@ async def resolve_name(req: ResolveNameRequest):
         if cached:
             rn = _reg_name(cached)
             if rn:
+                _record_name_resolve(db, user.id, name, rn, v, 0)
                 return ok({
                     "matched_name": v,
                     "registered_name": rn,
@@ -169,6 +175,7 @@ async def resolve_name(req: ResolveNameRequest):
         calls_used += 1
         rn = _reg_name(data)
         if rn:
+            _record_name_resolve(db, user.id, name, rn, v, calls_used)
             return ok({
                 "matched_name": v,
                 "registered_name": rn,
@@ -186,7 +193,7 @@ class DeepInvestigationRequest(BaseModel):
 
 
 @router.post("/deep-investigation", response_model=ApiResponse)
-async def deep_investigation(req: DeepInvestigationRequest):
+async def deep_investigation(req: DeepInvestigationRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """深度调查（付费进阶）：在财产线索基础上追加工商增量 + 司法因子明细，输出资产维度/变现难度/变现路径。
 
     积分：clues 缓存命中时只花增量（约 7 + 有记录因子数），未命中约 15-22；同企业 24h 内重复查询零新增。
@@ -217,6 +224,8 @@ async def deep_investigation(req: DeepInvestigationRequest):
     cached = cache_get(f"deep:{company}")
     if cached:
         report = build_deep_report(cached, calls_used=0)
+        _record_clue_activity(db, user.id, company, report)
+        _save_clue_report(db, user.id, "deep", f"深挖：{company}", [company], report)
         return ok({"company": company, "matched": True, "report": report, "cached": True}, "深度调查报告（缓存命中，新增 0 次调用）")
 
     # 预估积分（用于前端确认弹窗提示；实际消耗在查询后回填）
@@ -239,7 +248,64 @@ async def deep_investigation(req: DeepInvestigationRequest):
         }, "名称未确认，已消耗部分积分（查询失败不缓存）")
 
     report = build_deep_report(deep, calls_used=estimate)
+    _record_clue_activity(db, user.id, company, report)
+    _save_clue_report(db, user.id, "deep", f"深挖：{company}", [company], report)
     return ok({"company": company, "matched": True, "report": report, "cached": False, "estimate": estimate}, f"深度调查报告完成（预估消耗约 {estimate} 积分）")
+
+
+def _record_clue_activity(db: Session, user_id: int, company: str, report: dict) -> None:
+    """财产线索查询留痕（活动记录 kind=clue）"""
+    try:
+        from ..services.activity import add_activity
+
+        summary = ""
+        total = report.get("total_assets") if isinstance(report, dict) else None
+        if isinstance(report, dict):
+            assets = report.get("assets") or []
+            found = sum(1 for a in assets if a.get("found"))
+            total = len(assets)
+            summary = f"资产维度 {found}/{total} 项有线索"
+        add_activity(
+            db, user_id, "clue",
+            title=f"财产线索：{company}",
+            summary=summary or "深度调查完成",
+            detail={"company": company, "report_keys": list(report.keys()) if isinstance(report, dict) else None},
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("clue activity record failed: %s", e)
+
+
+def _save_clue_report(db: Session, user_id: int, report_type: str, title: str, subject_names: list[str], content: dict) -> None:
+    """财产线索/深度调查报告落库（2026-09-01 用户确认：需留存，供管理后台查看与单条清缓存）"""
+    try:
+        from ..models import ClueReport
+
+        db.add(ClueReport(
+            user_id=user_id,
+            report_type=report_type,  # case=综合分析 / deep=深度调查(深挖)
+            title=title[:290],
+            subject_names=json.dumps([n for n in subject_names if n], ensure_ascii=False),
+            content=json.dumps(content, ensure_ascii=False, default=str),
+        ))
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("clue report save failed: %s", e)
+        db.rollback()
+
+
+def _record_name_resolve(db: Session, user_id: int, input_name: str, matched: str, variant: str, calls_used: int) -> None:
+    """名称变体解析留痕（活动记录 kind=clue）"""
+    try:
+        from ..services.activity import add_activity
+
+        add_activity(
+            db, user_id, "clue",
+            title=f"名称解析：{input_name}",
+            summary=f"匹配现用名：{matched}（新增 {calls_used} 次调用）",
+            detail={"input": input_name, "matched": matched, "variant": variant, "calls_used": calls_used},
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("name resolve activity record failed: %s", e)
 
 
 class CaseReportRequest(BaseModel):
@@ -259,8 +325,8 @@ def _is_person_name(name: str) -> bool:
 
 
 @router.post("/case-report", response_model=ApiResponse)
-async def build_case_report_api(req: CaseReportRequest):
-    """综合分析报告：批量查询（缓存优先，自然人跳过企查查）并融合生成案件级追索报告"""
+async def build_case_report_api(req: CaseReportRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """综合分析报告：批量查询（缓存优先，自然人跳过企查查）并融合生成案件级追索报告（落库留存）"""
     from ..api.qcc import cache_get, query_property_clues
     from ..services.case_analyzer import build_case_report
 
@@ -298,12 +364,19 @@ async def build_case_report_api(req: CaseReportRequest):
         "cached_hits": cached_hits,
         "skipped_persons": skipped_persons,
     }
+    # 落库留存（2026-09-01 用户确认）：综合分析报告供管理后台查看/清缓存
+    _save_clue_report(
+        db, user.id, "case",
+        f"财产线索综合分析（{len(req.entities)} 个主体）",
+        [e.name.strip() for e in req.entities],
+        report,
+    )
     return ok(report, f"综合分析完成：新增调用 {new_calls} 次，缓存命中 {cached_hits} 次，自然人跳过 {skipped_persons} 人")
 
 
 @router.post("/case-report-deep", response_model=ApiResponse)
-async def build_case_report_deep_api(req: CaseReportRequest):
-    """深度对比版综合分析报告：原版财产追踪 + 每家企业深度调查，输出对比结论。
+async def build_case_report_deep_api(req: CaseReportRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """深度对比版综合分析报告：原版财产追踪 + 每家企业深度调查，输出对比结论（落库留存）。
 
     积分：原版部分缓存优先（同 case-report）；深度部分对每家非自然人企业跑 query_deep_investigation
     （clues 缓存命中时基底 0 新增，只花增量 7 + 有记录因子明细 ≈ 10-17 分/家）。
@@ -401,6 +474,29 @@ async def build_case_report_deep_api(req: CaseReportRequest):
             f"其中「对外应收债权/未来收入」若存在，是原版无法覆盖的追偿突破口，建议重点跟进。"
         )
 
+    # 落库留存（2026-09-01 用户确认）：深度对比版综合分析报告供管理后台查看/清缓存
+    _save_clue_report(
+        db, user.id, "case",
+        f"财产线索综合分析·深度版（{len(entities)} 个主体）",
+        [e["name"] for e in entities],
+        {
+            "standard": standard,
+            "deep": {
+                "reports": deep_reports,
+                "estimates": deep_estimates,
+                "deep_cached": deep_cached,
+                "deep_calls": deep_calls,
+                "diff": diff_items,
+                "summary": deep_summary,
+            },
+            "stats": {
+                "standard": standard.get("stats", {}),
+                "deep_cached": deep_cached,
+                "deep_calls": deep_calls,
+                "deep_estimate_total": sum(deep_estimates.values()),
+            },
+        },
+    )
     return ok({
         "standard": standard,
         "deep": {

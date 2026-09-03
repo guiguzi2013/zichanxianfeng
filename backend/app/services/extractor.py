@@ -1,4 +1,4 @@
-"""AI 结构化提取服务（尽调引擎节点①）
+"""系统结构化提取服务（尽调引擎节点①）
 
 三种输入（文本/链接/Excel行）统一走这里。LLM 只做提取，金额/日期规范化和完整度评估在后端做。
 """
@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = """你是不良资产债权尽调领域的资深数据提取助手。
 你的任务：从用户提供的【债权原始信息】中，提取出结构化的债权字段。
 严格要求：
+0. 输出内容中严禁出现"AI"字样（AI生成/AI分析等一律禁用）；涉及系统能力表述时使用"系统"二字。
 1. 只输出一个 JSON 对象，不要输出任何其他文字、解释或 Markdown 代码块标记。
 2. 所有字段值必须是字符串或 null，金额字段保持"原始文本"形式（例如"539万元""1.2亿"），不要换算。
 3. 严禁编造：原文中没有的信息必须填 null，不要猜测、不要补全。
@@ -33,16 +34,40 @@ SYSTEM_PROMPT = """你是不良资产债权尽调领域的资深数据提取助�
       "fees_text": "费用原文；无则 null",
       "guaranty_type": "抵押 | 保证 | 质押 | 信用 | null",
       "guarantor_text": "保证人描述原文摘录；无则 null",
-      "collateral_text": "抵押物完整描述原文摘录，含位置/面积/产权证号；无则 null",
+      "collateral_text": "抵押物完整描述原文摘录，含位置/面积/产权证号/结构/建成年份；无则 null",
       "judicial_status": "司法状态原文；无则 null",
       "listing_price_text": "挂牌价/起拍价原文；无则 null",
       "deadline": "YYYY-MM-DD；无则 null",
-      "extra_notes": "其他有用信息原文摘录；无则 null"
+      "extra_notes": "其他有用信息原文摘录；无则 null",
+
+      "collateral_type": "抵押物类型（住宅/商铺/商业/写字楼/工业厂房/土地等）；无则 null",
+      "land_area_sqm": "土地面积，纯数字（如 9664.9），无则 null",
+      "building_area_sqm": "建筑面积，纯数字（如 2631.81），无则 null",
+      "build_year": "建成年份，纯数字（如 2010），无则 null",
+      "structure_type": "建筑结构（轻钢结构/重钢结构/砖混框架/框架/钢结构等）；无则 null",
+      "property_cert_no": "产权证号（房产证/不动产权证号，如'京房权证朝字第123456号'）；无则 null",
+      "property_owner": "权利人/产权人（证载权利人，可能是债务人或抵押人）；无则 null",
+      "property_use": "房屋/土地用途（住宅/商业/办公/工业/厂房/仓储等）；无则 null",
+      "mortgage_reg_no": "抵押登记编号（他项权证号/抵押登记证明号）；无则 null",
+      "mortgagor": "抵押人（提供抵押担保的主体）；无则 null",
+      "region": "地区（省-市，如'山东-青岛'）；无则 null",
+      "mortgage_amount": "抵押金额/担保金额原文；无则 null",
+      "mortgage_rank": "抵押顺位/抵押权登记情况（第一顺位等）；无则 null",
+      "seizure": "查封/轮候查封情况原文；无则 null",
+      "collateral_status": "抵押物现状（占用/租赁/空置/在建等）；无则 null",
+      "interest_base_date": "计息起始日 YYYY-MM-DD；无则 null",
+      "case_number": "案号（如'（2024）鲁02民初123号'）；无则 null",
+      "case_cause": "案由（如'金融借款合同纠纷'）；无则 null",
+      "loan_bank": "贷款行/出让方；无则 null"
     }
   ],
   "multi_debtor_ambiguous": false,
   "extraction_confidence": "high | medium | low"
-}"""
+}
+
+提取要点：
+- 用户提供房产证/不动产权证书时，证上载明的全部信息都要提取：证号(property_cert_no)、权利人(property_owner)、坐落(进 collateral_text)、面积(land_area_sqm/building_area_sqm)、用途(property_use)、结构(structure_type)、建成年份(build_year)、抵押登记(mortgage_reg_no)。
+- 原文没有的信息一律 null，绝不编造、不推断。"""
 
 # ---------- 金额/日期规范化 ----------
 
@@ -95,6 +120,29 @@ def clean_empty(value: str | None) -> str | None:
     return v
 
 
+def _to_num(v) -> float | None:
+    """LLM 输出的数字字符串（如 '9664.9'）→ float；无效/空 → None"""
+    if v is None:
+        return None
+    s = str(v).strip().replace(",", "")
+    if not s or s in ("null", "None", "-", "—"):
+        return None
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def _fmt_num(v) -> str | None:
+    """数字 → 前端友好字符串（去尾零），None → None"""
+    if v is None:
+        return None
+    f = float(v)
+    if f == int(f):
+        return str(int(f))
+    return str(f)
+
+
 # ---------- 完整度评估 ----------
 
 # 关键字段（产品决策 2026-08-20）：债务人名称 / 债权本金 / 抵押物 三者齐备才可尽调
@@ -105,12 +153,63 @@ KEY_FIELD_LABELS = {
     "collateral": "抵押物",
 }
 
+# ---------- 可尽调抵押物判定（2026-09-02 用户确认细化） ----------
+# 用户规则：抵押物一般应是房产（我们只能对房产估价）；抵押物描述不清楚（只有类型词）、
+# 或抵押物是机器设备/股权/应收账款/车辆等其他物品，不能尽调。
+# "描述清楚" = 位置细节（路/街/大道/巷/弄/小区/苑/花园/幢/栋/层/室/镇/村/县/乡/
+#   高新区/保税区/开发区/金融区等专有区域）或 面积(㎡) 或 证号 或 门牌号模式，至少一项。
+# 普通"XX区/XX市"大范围不算（无法落到具体房产）；"XX县/XX乡"及专有区域算。
+_REAL_ESTATE_TYPES = (
+    "住宅", "商业", "工业", "土地", "厂房", "写字楼", "商铺", "公寓",
+    "别墅", "仓储", "办公", "门店", "车位", "房产", "不动产", "楼", "大厦",
+)
+_PURE_TYPE_WORDS = {
+    "房产", "住宅", "住宅房产", "商业", "商业用房", "工业", "工业厂房",
+    "土地", "厂房", "写字楼", "商铺", "公寓", "别墅", "仓储", "办公",
+    "门店", "车位", "抵押物", "不动产", "无", "—", "-", "其他",
+}
+_POSITION_DETAIL = (
+    "路", "街", "大道", "巷", "弄", "小区", "苑", "花园", "幢", "栋",
+    "层", "室", "镇", "村", "县", "乡",
+    "高新区", "保税区", "开发区", "金融区",
+)
+_AREA_MARK = ("㎡", "平方米", "平米", "平方")
+_CERT_MARK = ("权证", "房产证", "不动产权证", "登记证明", "产权证")
+_DOOR_NUM_RE = re.compile(r"\d+\s*(号|幢|栋|室|层|单元)")
+
+
+def is_valid_collateral(collateral: str, collateral_type: str = "") -> bool:
+    """可尽调抵押物判定：房产类 + 描述具体（位置/面积/证号/门牌号 至少一项）。
+
+    返回 False 的情况：抵押物缺失、纯类型词（如"住宅房产"）、非房产（设备/股权/车辆等）、
+    描述只有大范围（如"青岛市黄岛区"）无具体位置信息。
+    """
+    text = (collateral or "").strip()
+    ctype = (collateral_type or "").strip()
+    if not text:
+        return False
+    if text in _PURE_TYPE_WORDS:
+        return False
+    combined = text + ctype
+    # ① 必须是房产/不动产类（排除机器设备/股权/应收账款/车辆/存货等）
+    if not any(k in combined for k in _REAL_ESTATE_TYPES):
+        return False
+    # ② 描述必须具体：位置细节 / 面积 / 证号 / 门牌号模式，至少一项
+    if any(k in text for k in _POSITION_DETAIL):
+        return True
+    if any(k in text for k in _AREA_MARK):
+        return True
+    if any(k in text for k in _CERT_MARK):
+        return True
+    return bool(_DOOR_NUM_RE.search(text))
+
 
 def evaluate_completeness(fields: dict[str, Any]) -> tuple[str, list[str]]:
     """返回 (等级, 缺失字段列表)。
 
     规则（产品确认）：
     - 关键字段（债务人/本金/抵押物）任一缺失 → red，不可勾选尽调；
+    - 抵押物必须合格（is_valid_collateral：房产类+描述具体），否则视为缺失；
     - 关键字段齐备：次要字段（利息/担保类型/司法状态）缺失 ≤1 → green，否则 yellow。
     """
     missing: list[str] = []
@@ -118,6 +217,10 @@ def evaluate_completeness(fields: dict[str, Any]) -> tuple[str, list[str]]:
         v = fields.get(k)
         if k == "principal_cents":
             if v is None:
+                missing.append(KEY_FIELD_LABELS[k])
+        elif k == "collateral":
+            extra = fields.get("extra_fields") or {}
+            if not is_valid_collateral(v, extra.get("collateral_type")):
                 missing.append(KEY_FIELD_LABELS[k])
         elif not v:
             missing.append(KEY_FIELD_LABELS[k])
@@ -159,6 +262,18 @@ def synthesize_description(fields: dict[str, Any]) -> str:
         parts.append(f"司法状态：{fields['judicial_status']}")
     if fields.get("listing_price_cents") is not None:
         parts.append(f"挂牌价：{fields['listing_price_cents'] / 100 / 10000:.2f}万元")
+    # 扩展字段
+    extra = fields.get("extra_fields") or {}
+    if extra.get("region"):
+        parts.append(f"地区：{extra['region']}")
+    if extra.get("mortgagor"):
+        parts.append(f"抵押人：{extra['mortgagor']}")
+    if extra.get("collateral_type"):
+        parts.append(f"抵押物类型：{extra['collateral_type']}")
+    if extra.get("loan_bank"):
+        parts.append(f"贷款行：{extra['loan_bank']}")
+    if extra.get("batch"):
+        parts.append(f"批次：{extra['batch']}")
     return "；".join(parts) + "。" if parts else ""
 
 
@@ -205,9 +320,34 @@ async def extract_from_text(raw_text: str) -> list[dict]:
             "deadline": normalize_date(d.get("deadline")),
             "extra_notes": clean_empty(d.get("extra_notes")),
         }
+        # 扩展字段（存入 extra_fields，见字段设计文档；2026-09-02 扩房产证/抵押物明细）
+        extra = {
+            "collateral_type": clean_empty(d.get("collateral_type")),
+            "land_area_sqm": _fmt_num(_to_num(d.get("land_area_sqm"))),
+            "building_area_sqm": _fmt_num(_to_num(d.get("building_area_sqm"))),
+            "build_year": _fmt_num(_to_num(d.get("build_year"))),
+            "structure_type": clean_empty(d.get("structure_type")),
+            "property_cert_no": clean_empty(d.get("property_cert_no")),
+            "property_owner": clean_empty(d.get("property_owner")),
+            "property_use": clean_empty(d.get("property_use")),
+            "mortgage_reg_no": clean_empty(d.get("mortgage_reg_no")),
+            "mortgagor": clean_empty(d.get("mortgagor")),
+            "region": clean_empty(d.get("region")),
+            "batch": clean_empty(d.get("batch")),
+            "loan_bank": clean_empty(d.get("loan_bank")),
+            "mortgage_amount": clean_empty(d.get("mortgage_amount")),
+            "mortgage_rank": clean_empty(d.get("mortgage_rank")),
+            "seizure": clean_empty(d.get("seizure")),
+            "collateral_status": clean_empty(d.get("collateral_status")),
+            "interest_base_date": normalize_date(d.get("interest_base_date")),
+            "case_number": clean_empty(d.get("case_number")),
+            "case_cause": clean_empty(d.get("case_cause")),
+        }
+        fields["extra_fields"] = {k: v for k, v in extra.items() if v}
         completeness, missing = evaluate_completeness(fields)
         fields["completeness"] = completeness
         fields["missing_fields"] = missing
+        fields["synthesized_description"] = synthesize_description(fields)
         claims.append(fields)
     return claims
 
@@ -228,6 +368,27 @@ def extract_from_excel_row(row: dict[str, Any]) -> dict[str, Any]:
         "deadline": normalize_date(row.get("deadline")),
         "extra_notes": clean_empty(row.get("extra_notes")),
     }
+    # 扩展字段（Excel 列映射；2026-09-02 扩房产证/抵押物明细）
+    extra = {}
+    for k in ("collateral_type", "land_area_sqm", "building_area_sqm", "build_year", "structure_type",
+              "property_cert_no", "property_owner", "property_use", "mortgage_reg_no",
+              "mortgagor", "region", "batch", "loan_bank",
+              "mortgage_amount", "mortgage_rank", "seizure", "collateral_status",
+              "interest_base_date", "case_number", "case_cause"):
+        v = row.get(k)
+        if v is None or str(v).strip() == "":
+            continue
+        if k in ("land_area_sqm", "building_area_sqm", "build_year"):
+            nv = _fmt_num(_to_num(v))
+            if nv is not None:
+                extra[k] = nv
+        elif k == "interest_base_date":
+            nd = normalize_date(str(v))
+            if nd:
+                extra[k] = nd
+        else:
+            extra[k] = clean_empty(str(v))
+    fields["extra_fields"] = extra
     completeness, missing = evaluate_completeness(fields)
     fields["completeness"] = completeness
     fields["missing_fields"] = missing

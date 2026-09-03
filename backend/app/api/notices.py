@@ -10,7 +10,7 @@ from ..database import get_db
 from ..models import Notice, User
 from ..schemas.common import ApiResponse, err, ok
 from ..services.audit import write_audit_log
-from .deps import require_admin
+from .deps import require_editor
 
 router = APIRouter(tags=["notices"])
 
@@ -55,11 +55,20 @@ def get_notice(notice_id: int, db: Session = Depends(get_db)):
     return ok(_notice_to_dict(notice))
 
 
-# ---- 管理后台（admin）----
+# ---- 管理后台（admin/editor 均可维护平台公告）----
+
+
+@router.get("/admin/notices", response_model=ApiResponse)
+def list_admin_notices(editor: User = Depends(require_editor), db: Session = Depends(get_db)):
+    """管理列表：含已停用公告（置顶优先，时间倒序）"""
+    notices = db.scalars(
+        select(Notice).order_by(Notice.is_pinned.desc(), Notice.published_at.desc(), Notice.id.desc()).limit(200)
+    ).all()
+    return ok({"notices": [_notice_to_dict(n) for n in notices]})
 
 
 @router.post("/admin/notices", response_model=ApiResponse)
-def create_notice(req: NoticeCreate, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+def create_notice(req: NoticeCreate, editor: User = Depends(require_editor), db: Session = Depends(get_db)):
     notice = Notice(
         title=req.title,
         content=req.content,
@@ -68,14 +77,14 @@ def create_notice(req: NoticeCreate, admin: User = Depends(require_admin), db: S
         published_at=req.published_at or datetime.now(),
     )
     db.add(notice)
-    write_audit_log(db, admin.id, "notice", "create", entity_id=None, change_summary={"title": req.title})
+    write_audit_log(db, editor.id, "notice", "create", entity_id=None, change_summary={"title": req.title})
     db.commit()
     db.refresh(notice)
     return ok(_notice_to_dict(notice), "公告已发布")
 
 
 @router.put("/admin/notices/{notice_id}", response_model=ApiResponse)
-def update_notice(notice_id: int, req: NoticeCreate, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+def update_notice(notice_id: int, req: NoticeCreate, editor: User = Depends(require_editor), db: Session = Depends(get_db)):
     notice = db.get(Notice, notice_id)
     if notice is None:
         raise err("公告不存在", http_status=404)
@@ -85,18 +94,18 @@ def update_notice(notice_id: int, req: NoticeCreate, admin: User = Depends(requi
     notice.is_pinned = req.is_pinned
     notice.enabled = req.enabled
     notice.published_at = req.published_at or notice.published_at
-    write_audit_log(db, admin.id, "notice", "update", entity_id=notice_id, change_summary={"before": before, "after": {"title": req.title, "enabled": req.enabled}})
+    write_audit_log(db, editor.id, "notice", "update", entity_id=notice_id, change_summary={"before": before, "after": {"title": req.title, "enabled": req.enabled}})
     db.commit()
     db.refresh(notice)
     return ok(_notice_to_dict(notice), "公告已更新")
 
 
 @router.delete("/admin/notices/{notice_id}", response_model=ApiResponse)
-def delete_notice(notice_id: int, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+def delete_notice(notice_id: int, editor: User = Depends(require_editor), db: Session = Depends(get_db)):
     notice = db.get(Notice, notice_id)
     if notice is None:
         raise err("公告不存在", http_status=404)
-    write_audit_log(db, admin.id, "notice", "delete", entity_id=notice_id, change_summary={"title": notice.title})
+    write_audit_log(db, editor.id, "notice", "delete", entity_id=notice_id, change_summary={"title": notice.title})
     db.delete(notice)
     db.commit()
     return ok(None, "公告已删除")

@@ -3,13 +3,10 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
-.env
-data/
 *.db
 
 # Node
 node_modules/
-dist/
 *.local
 
 # IDE
@@ -20,12 +17,29 @@ dist/
 Thumbs.db
 .DS_Store
 
-# 部署
+# ===== 密钥（绝不入库）=====
+.env
+backend/.env
 deploy/.env
+
+# ===== 运行时数据（不入库；种子文件 fonts/llm_constraints.md 入库）=====
+backend/data/app.db
+backend/data/app.db.bak
+backend/data/app.db-*
+backend/data/uploads/
+backend/data/pdf/
+backend/data/*.log
+backend/reports/
+backend/uploads/
+
+# ===== 部署临时物 =====
 deploy/certbot-www/
 deploy/certbot-certs/
 
-# 报告与上传产物
-backend/data/
-backend/reports/
-backend/uploads/
+# ===== 日志 =====
+*.log
+
+# ===== 一次性探测/测试脚本（不入库）=====
+frontend/*.cjs
+frontend/node_test_collateral.*
+frontend/test_*.mjs

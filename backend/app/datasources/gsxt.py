@@ -27,9 +27,9 @@ class GsxtDataSource(EnterpriseDataSource):
 
     async def get_basic_info(self, name: str) -> DataSourceResult:
         if not self.enabled:
-            return self._unavailable("公示系统未启用")
+            return self._unavailable("工商信息暂不可用")
         # P0 骨架：公示系统需滑块验证，返回降级结果，由报告标注"需人工核实"
-        return self._unavailable("公示系统需滑块验证，建议人工在 gsxt.gov.cn 核实，或后续接入解析服务")
+        return self._unavailable("工商信息暂未获取到，建议人工核实")
 
     async def get_shareholders(self, name: str) -> DataSourceResult:
-        return self._unavailable("公示系统需滑块验证，股东信息建议人工核实")
+        return self._unavailable("股东信息暂未获取到，建议人工核实")

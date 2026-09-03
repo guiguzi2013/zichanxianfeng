@@ -1,56 +1,46 @@
 import { useEffect, useState } from 'react'
-import { Card, List, Tag, Typography, Pagination, Spin, Empty, Button, Space, Alert } from 'antd'
+import { Card, List, Tag, Typography, Spin, Empty, Button, Space, Input } from 'antd'
 import { BellOutlined, RightOutlined } from '@ant-design/icons'
-import { useNavigate, useSearchParams } from 'react-router-dom'
 import client from '../api/client'
 
 const { Title, Text, Paragraph } = Typography
 
+/** 平台公告列表页：展示平台发布的公告（notices 表，与首页公告版块同源） */
 export default function NoticeListPage() {
-  const navigate = useNavigate()
-  const [params] = useSearchParams()
   const [notices, setNotices] = useState([])
   const [loading, setLoading] = useState(true)
   const [detail, setDetail] = useState(null) // 详情弹层
+  const [keyword, setKeyword] = useState('')
 
   useEffect(() => {
-    client.get('/notices').then((resp) => setNotices(resp.data?.notices || [])).catch(() => {})
-      .finally(() => setLoading(false))
+    client.get('/notices').then((resp) => {
+      setNotices(resp.data?.notices || [])
+    }).catch(() => {}).finally(() => setLoading(false))
   }, [])
-
-  const openDetail = async (id) => {
-    try {
-      const resp = await client.get(`/notices/${id}`)
-      setDetail(resp.data)
-    } catch { /* 拦截器已提示 */ }
-  }
-
-  const noticeList = notices
 
   if (loading) return <div style={{ textAlign: 'center', padding: 100 }}><Spin size="large" /></div>
 
-  return (
-    <div style={{ maxWidth: 900, margin: '0 auto', padding: '24px 16px 80px' }}>
-      <Title level={3} style={{ marginBottom: 4 }}><BellOutlined style={{ marginRight: 8, color: 'var(--primary)' }} />平台公告</Title>
-      <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>平台运营通知、功能更新、债权转让与拍卖动态</Text>
+  // 2026-09-02：公告搜索（标题/内容过滤）
+  const kw = keyword.trim().toLowerCase()
+  const filtered = kw ? notices.filter((n) => `${n.title || ''} ${n.content || ''}`.toLowerCase().includes(kw)) : notices
 
-      {noticeList.length === 0 ? (
+  return (
+    <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 16px 80px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 4 }}>
+        <Title level={3} style={{ marginBottom: 0 }}><BellOutlined style={{ marginRight: 8, color: 'var(--primary)' }} />平台公告</Title>
+        <Input.Search allowClear placeholder="搜索公告标题/内容" style={{ width: 260 }} onSearch={(v) => setKeyword(v)} />
+      </div>
+      <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>平台发布的通知与说明（按时间排序）</Text>
+
+      {filtered.length === 0 ? (
         <Empty description="暂无公告" style={{ padding: 60 }} />
       ) : (
         <List
           itemLayout="vertical"
-          dataSource={noticeList}
-          pagination={{
-            pageSize: 8,
-            showSizeChanger: false,
-            showQuickJumper: true,
-            align: 'center',
-          }}
+          dataSource={filtered}
+          pagination={{ pageSize: 10, showSizeChanger: false, showQuickJumper: true, align: 'center' }}
           renderItem={(n) => (
-            <List.Item
-              style={{ cursor: 'pointer', padding: '14px 4px' }}
-              onClick={() => openDetail(n.id)}
-            >
+            <List.Item style={{ cursor: 'pointer', padding: '14px 4px' }} onClick={() => setDetail(n)}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>

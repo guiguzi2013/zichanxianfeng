@@ -9,6 +9,12 @@ from .config import get_settings
 
 settings = get_settings()
 
+# SQLite 相对路径（./data/app.db）锚定到后端包目录，避免受调用方 cwd 影响
+if settings.database_url.startswith("sqlite:///./"):
+    _base = Path(__file__).resolve().parent.parent  # backend/
+    _rel = settings.database_url.replace("sqlite:///./", "", 1)
+    settings.database_url = f"sqlite:///{(_base / _rel).as_posix()}"
+
 # SQLite 需要 check_same_thread=False 供 FastAPI 多线程使用
 if settings.database_url.startswith("sqlite"):
     connect_args = {"check_same_thread": False}

@@ -34,7 +34,7 @@ export default function AdminLoginPage() {
           <SafetyOutlined /> 管理后台登录
         </Title>
         <Text type="secondary" style={{ display: 'block', textAlign: 'center', marginBottom: 20 }}>
-          资产先锋 · 管理员 / 运营编辑入口
+          NPL中国 · 管理员 / 运营编辑入口
         </Text>
         <Alert type="info" showIcon style={{ marginBottom: 16 }}
           message="运营编辑账号仅可维护『精选债权』『热门捡漏』栏目；系统配置与用户管理仅管理员可用。" />

@@ -69,15 +69,15 @@ def build_comparison(reports: list[Report]) -> dict:
 
 async def summarize_comparison(comparison: dict) -> dict:
     """LLM 生成对比总结（可选，mock 可用）"""
-    system = """你是不良资产投资顾问。基于多个债权的对比指标，给出横向对比分析。
+    system = """你是不良资产尽调分析助手。基于多个债权的对比指标，给出横向对比分析（仅供用户参考，不做买入决策）。
 输出 JSON：{"highlights": ["亮点1"...], "recommendation": "优先关注xxx", "warnings": ["注意..."], "ranking": ["债务人A", "债务人B"...]}
-要求：基于给定数据，禁止编造；数据缺失标注需人工核实。"""
+要求：基于给定数据，禁止编造；数据缺失标注需人工核实；输出内容中严禁出现"AI"字样（AI生成/AI分析等一律禁用），涉及系统能力表述时使用"系统"二字。"""
     user = json.dumps(comparison, ensure_ascii=False)
     try:
         return await chat_json(system, user, temperature=0.3)
     except LLMError:
         return {
-            "highlights": ["数据不足，请配置 DEEPSEEK_API_KEY 获取智能对比"],
+            "highlights": ["数据不足，暂无法生成智能对比，请完善数据后重试"],
             "recommendation": "需人工分析",
             "warnings": [],
             "ranking": [],

@@ -116,7 +116,7 @@ export default function ComparePage() {
               生成对比
             </Button>
             <Button loading={sumLoading} onClick={doSummary} disabled={!comparison}>
-              AI 对比总结
+              系统对比总结
             </Button>
           </Space>
         </Space>
@@ -129,7 +129,7 @@ export default function ComparePage() {
       )}
 
       {summary && (
-        <Card title="AI 对比总结" style={{ marginTop: 16 }}>
+        <Card title="系统对比总结" style={{ marginTop: 16 }}>
           {summary.ranking && summary.ranking.length > 0 && (
             <div style={{ marginBottom: 12 }}>
               <Text strong>优先关注排序：</Text>

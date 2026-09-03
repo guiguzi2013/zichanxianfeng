@@ -10,7 +10,12 @@ python-multipart==0.0.20
 openpyxl==3.1.5
 httpx==0.28.1
 weasyprint==63.1
+reportlab==5.0.1
 jinja2==3.1.5
 python-docx==1.1.2
 pypdf==5.1.0
 pytest==9.1.1
+# 抓取渲染 / 附件 OCR 运行依赖（2026-09-03 Docker 部署补全；playwright 与 .venv 一致）
+playwright==1.62.0
+pymupdf==1.28.2
+rapidocr-onnxruntime==1.4.4

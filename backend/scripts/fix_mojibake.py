@@ -20,7 +20,7 @@ try:
 
     notice = Notice(
         title="资产先锋平台正式上线",
-        content="欢迎使用资产先锋智能尽调平台！平台提供债权信息聚合、AI 尽调分析、九版块尽调报告等能力，助您在不良资产投资决策前快速完成风险核查。",
+        content="欢迎使用资产先锋智能尽调平台！平台提供债权信息聚合、系统尽调分析、九版块尽调报告等能力，助您在不良资产投资决策前快速完成风险核查。",
         is_pinned=True,
         enabled=True,
         published_at=datetime.now(),

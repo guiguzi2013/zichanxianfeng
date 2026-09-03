@@ -13,25 +13,32 @@ export default function AppHeader() {
   const [logoError, setLogoError] = useState(false)
 
   // 前台导航（管理后台不在此显示，走独立 /admin-login）
+  // 去掉「首页」「公告」两个无用菜单（用户确认）
   const menuItems = [
-    { key: '/', label: '首页' },
     { key: '/debts', label: '债权信息' },
     { key: '/property-clues', label: '财产线索' },
     { key: '/upload', label: '智能尽调' },
-    { key: '/compare', label: '债权对比' },
-    { key: '/notices', label: '公告' },
+    { key: '/valuation', label: '土地厂房估价' },
+    { key: '/valuation/commercial', label: '商业房产估价' },
   ]
 
-  // 用户下拉（登录后）：我的任务 / 我的报告 / 账户信息 / 管理后台（仅 admin/editor）
+  // 用户下拉（登录后）：
+  // 员工（admin/editor）只保留「管理后台 + 退出登录」（用户功能对其无用）
+  // 普通用户保留「我的任务 / 我的报告 / 账户信息 + 退出登录」
   const isBackend = user?.role === 'admin' || user?.role === 'editor'
-  const userMenuItems = [
-    { key: 'tasks', icon: <UnorderedListOutlined />, label: '我的任务' },
-    { key: 'reports', icon: <FileTextOutlined />, label: '我的报告' },
-    { key: 'profile', icon: <IdcardOutlined />, label: '账户信息' },
-    ...(isBackend ? [{ key: 'admin', icon: <SettingOutlined />, label: '管理后台' }] : []),
-    { type: 'divider' },
-    { key: 'logout', icon: <LogoutOutlined />, label: '退出登录' },
-  ]
+  const userMenuItems = isBackend
+    ? [
+        { key: 'admin', icon: <SettingOutlined />, label: '管理后台' },
+        { type: 'divider' },
+        { key: 'logout', icon: <LogoutOutlined />, label: '退出登录' },
+      ]
+    : [
+        { key: 'tasks', icon: <UnorderedListOutlined />, label: '我的任务' },
+        { key: 'reports', icon: <FileTextOutlined />, label: '我的报告' },
+        { key: 'profile', icon: <IdcardOutlined />, label: '账户信息' },
+        { type: 'divider' },
+        { key: 'logout', icon: <LogoutOutlined />, label: '退出登录' },
+      ]
   const userMenu = {
     items: userMenuItems,
     onClick: ({ key }) => {
@@ -61,13 +68,13 @@ export default function AppHeader() {
       <div style={{ maxWidth: 1200, margin: '0 auto', width: '100%', height: '100%', display: 'flex', alignItems: 'center', gap: 24 }}>
         <div style={{ display: 'flex', alignItems: 'center', height: '100%', cursor: 'pointer', flexShrink: 0 }} onClick={() => navigate('/')}>
           {!logoError ? (
-            <img src="/logo.png?v=3" alt="资产先锋" style={{ height: 45, maxWidth: 300, objectFit: 'contain' }} onError={() => setLogoError(true)} />
+            <img src="/logo.png?v=3" alt="NPL中国" style={{ height: 45, maxWidth: 300, objectFit: 'contain' }} onError={() => setLogoError(true)} />
           ) : (
             <>
-              <div style={{ width: 44, height: 44, borderRadius: 8, background: 'linear-gradient(135deg, #1B6FE8, #3D8BF5)', color: '#fff', fontSize: 20, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>先</div>
+              <div style={{ width: 44, height: 44, borderRadius: 8, background: 'linear-gradient(135deg, #1B6FE8, #3D8BF5)', color: '#fff', fontSize: 20, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>N</div>
               <div style={{ lineHeight: 1.1 }}>
-                <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-main)' }}>资产先锋</div>
-                <div style={{ fontSize: 11, color: 'var(--text-weak)' }}>不良资产智能尽调平台</div>
+                <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-main)' }}>NPL中国</div>
+                <div style={{ fontSize: 11, color: 'var(--text-weak)' }}>中国不良资产 · 尽调与投融资平台</div>
               </div>
             </>
           )}

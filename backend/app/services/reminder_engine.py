@@ -4,6 +4,7 @@
 match() 遍历规则表返回触发的提醒，只显示相关的，不信息轰炸。
 """
 from dataclasses import dataclass, field
+import re
 
 
 @dataclass
@@ -27,7 +28,7 @@ def _count_collaterals(collateral: str | None) -> int:
     1) 数"第X号"证号段（最可靠，如"第201034568号、第201034616号"→2）
     2) 数"证号"关键词出现次数
     3) 数"名下/位于"标记（多套住宅场景）
-    4) 数"一套/两套/N套"（备用）
+    4) 数"N套"（数字/中文数字，如"60套"→60、"三套"→3）
     无法判定返回 1。
     """
     if not collateral:
@@ -38,11 +39,41 @@ def _count_collaterals(collateral: str | None) -> int:
         return len(nums)
     if re.search(r"证号", collateral):
         return len(re.findall(r"证号", collateral))
+    # N套（数字/中文数字）优先于"名下/位于"（"60套"→60，避免被"位于"分支误判为1）
+    m = re.search(r"(\d+)\s*套", collateral)
+    if m:
+        return int(m.group(1))
+    cn_map = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+    mc = re.search(r"([一二两三四五六七八九十]+)\s*套", collateral)
+    if mc:
+        w = mc.group(1)
+        if len(w) == 1:
+            return cn_map.get(w, 1)
+        if len(w) == 2:
+            return cn_map.get(w[0], 1) * 10 + cn_map.get(w[1], 0)
+        return 1
     if re.search(r"名下|位于", collateral):
         return len(re.findall(r"名下|位于", collateral))
-    if re.search(r"[一二两三四五六七八九十\d]+套|一套", collateral):
-        return len(re.findall(r"[一二两三四五六七八九十\d]+套|一套", collateral))
     return 1
+
+
+def _is_single_residence_maybe(collateral: str | None) -> bool:
+    """抵押物是否为『单套住宅』（可能是自然人唯一住房，触发条件式提醒）。
+    多套/多抵押物/非住宅 → False；含『唯一住房』明确字样 → False（由 A9 定论处理）。
+    """
+    c = (collateral or "").strip()
+    if not c:
+        return False
+    if "唯一住房" in c:
+        return False
+    if not any(k in c for k in ("住宅", "住房", "房产", "房屋")):
+        return False
+    if _count_collaterals(c) > 1:
+        return False
+    # 多地址/多抵押物（顿号、分号分隔多个）→ 非单套
+    if re.search(r"[、；;]", c):
+        return False
+    return True
 
 
 def _contains(text: str | None, keywords: list[str]) -> bool:
@@ -70,8 +101,11 @@ def _build_rules() -> list[Rule]:
              "在建工程", "可能存在建设工程款优先受偿权"),
         Rule("A8", lambda c, d: _contains(c.collateral, ["工业厂房", "厂房", "集体土地", "工业用地"]),
              "工业厂房/集体土地", "流转受限，变现难度高"),
-        Rule("A9", lambda c, d: c.debtor_type == "person" and _contains(c.collateral, ["住宅", "住房", "唯一住房"]),
-             "自然人唯一住房", "执行难度大，需保障基本居住（5~8年租金）"),
+        # 唯一住房：① 原文/录入明确写"唯一住房"→定论提醒；② 单套住宅→条件式提醒（未确认不能下定论）
+        Rule("A9", lambda c, d: c.debtor_type == "person" and "唯一住房" in (c.collateral or ""),
+             "自然人唯一住房（已确认）", "执行难度大，需保障基本居住（安置住房或扣除5~8年租金），实际受偿额降低"),
+        Rule("A9b", lambda c, d: c.debtor_type == "person" and _is_single_residence_maybe(c.collateral),
+             "可能为自然人唯一住房", "若为自然人唯一住房，执行难度会加大，需保障基本居住（安置住房或扣除5~8年租金）；请核实该抵押物是否为其唯一住房后再评估"),
         Rule("A10", lambda c, d: _contains(c.collateral, ["违建", "改建", "无证", "违章"]),
              "违建/改建", "无证部分不在抵押范围，可能无法过户"),
 

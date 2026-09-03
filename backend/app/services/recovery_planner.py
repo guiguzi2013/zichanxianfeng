@@ -98,6 +98,25 @@ def build_recovery_plan(claim, nodes: dict) -> dict:
 
     # 路径对比（版块8 要求：两条路径 + 最坏情况）
     has_mortgage = collateral.get("present") and claim.collateral
+    # 抵押物类型差异化的关注点（用户确认 2026-08-27）：
+    # 工业厂房 → 关注清场/租赁/轮候/权属瑕疵/土地性质(M0-M3/划拨)，不提"唯一住房"
+    # 住宅     → 保留居住保障（唯一住房）与清户成本
+    # 商业     → 关注租约/占用/税费/地段商业氛围
+    collateral_text = claim.collateral or ""
+    if "住宅" in collateral_text or "住房" in collateral_text:
+        # 唯一住房仅作条件式提示（未确认不能下定论；多套住宅不适用）
+        from .reminder_engine import _is_single_residence_maybe
+        if "唯一住房" in collateral_text:
+            auction_risk = "需关注抵押物是否存在在先查封/轮候、租赁占用、居住保障（已确认唯一住房）等障碍；住宅清户需安置或扣除租金，影响实际受偿。"
+        elif _is_single_residence_maybe(collateral_text):
+            auction_risk = "需关注抵押物是否存在在先查封/轮候、租赁占用等障碍；若为自然人唯一住房，清户需安置或扣除租金，影响实际受偿（请核实是否唯一住房）。"
+        else:
+            auction_risk = "需关注抵押物是否存在在先查封/轮候、租赁占用等障碍；住宅清户可能需安置或扣除租金，影响实际受偿。"
+    elif "商业" in collateral_text or "商铺" in collateral_text or "写字楼" in collateral_text or "网点" in collateral_text:
+        auction_risk = "需关注抵押物是否存在在先查封/轮候、租赁占用、欠缴税费等障碍；商业价值受地段与商业氛围影响大，建议实地尽调。"
+    else:
+        # 工业厂房/土地等
+        auction_risk = "需关注抵押物是否存在在先查封/轮候、租赁占用、清场、权属瑕疵等障碍；工业用地注意土地性质（划拨地过户需补缴出让金）与用地等级（M0/M1/M2/M3）对价值的影响。"
     paths = {
         "auction": {
             "title": "路径一：正常拍卖受偿",
@@ -107,7 +126,7 @@ def build_recovery_plan(claim, nodes: dict) -> dict:
                 if has_mortgage else
                 "取得执行依据后申请查封债务人在执行标的范围内的财产（账户/股权/不动产），拍卖变价受偿。"
             ),
-            "risk": "需关注抵押物是否存在在先查封/轮候、租赁占用、唯一住房等障碍。",
+            "risk": auction_risk,
         },
         "debt_in_kind": {
             "title": "路径二：以物抵债",
@@ -117,7 +136,8 @@ def build_recovery_plan(claim, nodes: dict) -> dict:
                 if has_mortgage else
                 "如无可变现财产，可与债务人协商以实物资产抵偿债务（需评估资产价值与过户障碍）。"
             ),
-            "risk": "以物抵债需全体债权人/法院认可，且要核算税费成本。",
+            # 有抵押权的债权人优先受偿（覆盖时尤其如此）：以物抵债不需要其他债权人同意
+            "risk": "以物抵债需法院认可并核算过户税费；本债权享有抵押权优先受偿，无需其他债权人同意。",
         },
         "worst": {
             "title": "最坏情况：执行不能的兜底",

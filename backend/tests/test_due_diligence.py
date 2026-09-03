@@ -28,6 +28,7 @@ def _make_claim(**kw):
         guarantor=None, collateral="抵押物：市北区房产，证号为：青房地权市字第201034568号",
         judicial_status="执行中", listing_price_cents=None, deadline=None,
         debtor_type="enterprise", completeness="green", missing_fields="[]",
+        extra_fields='{"interest_base_date": "2022-03-15", "region": "山东-青岛", "collateral_type": "住宅"}',
     )
     defaults.update(kw)
     return SimpleNamespace(**defaults)
@@ -39,7 +40,7 @@ class TestBuildReportContent:
         async def fake_node2(c):
             return {"type": "enterprise", "judicial_risk": {"note": "查询受限，需人工核实"}}
         async def fake_node3(c):
-            return {"documents": {"found": False, "not_found_note": "未检索到判决书"}, "statutes_note": "AI生成需核验"}
+            return {"documents": {"found": False, "not_found_note": "未检索到判决书"}, "statutes_note": "系统生成需核验"}
         async def fake_node4(c):
             return {"present": True, "items": [{"description": c.collateral, "valuation": {"data_insufficient": True}}]}
         async def fake_node6(c, nodes):
@@ -60,21 +61,38 @@ class TestBuildReportContent:
         content = asyncio.run(self._run(_make_claim()))
         assert "report_meta" in content
         assert "sections" in content
-        # 9 版块齐全
-        for sec in ["summary", "reminders", "claim_basic", "debtor", "guarantor",
-                    "collateral", "legal", "risk", "disposal"]:
+        assert "conclusion_bar" in content  # 顶部结论条
+        # 版块齐全（含新增：法律文件完备性/司法执行受偿/待补充清单）
+        for sec in ["summary", "reminders", "claim_basic", "legal_completeness", "debtor",
+                    "guarantor", "collateral", "legal", "execution_recovery", "risk",
+                    "disposal", "pending_supplements"]:
             assert sec in content["sections"], f"missing {sec}"
         # 元信息
         assert content["report_meta"]["debtor_name"] == "青岛测试公司"
         assert content["report_meta"]["report_style"] == "full"
-        # 本息
-        assert content["sections"]["claim_basic"]["interest_detail"]["mode"] == "lpr_estimate"
-        # 提醒（无判决书 → B5）
-        reminders = content["sections"]["reminders"]["items"]
-        ids = [r["rule_id"] for r in reminders]
-        assert "B5" in ids
+        # 本息：有计息截止日 → cutoff_continue（截止日利息 + 续算到报告当日）
+        assert content["sections"]["claim_basic"]["interest_detail"]["mode"] in ("cutoff_continue", "cutoff_no_continue", "with_judgment")
+        # 处置方案：多路径并列（形式A）
+        assert "paths" in content["sections"]["disposal"]
+        assert len(content["sections"]["disposal"]["paths"]) >= 2
+        # 结论条含评级（只给星）
+        assert content["conclusion_bar"]["rating"]
         # 免责声明
         assert "不构成投资建议" in content["disclaimer"]
+
+    def test_missing_interest_date(self):
+        """无计息截止日 → 直接用录入利息（no_info），本息合计=本金+利息"""
+        import asyncio
+        claim = _make_claim(extra_fields='{"region": "山东-青岛"}')
+        content = asyncio.run(self._run(claim))
+        interest = content["sections"]["claim_basic"]["interest_detail"]
+        assert interest["mode"] == "no_info"
+        assert "无计息信息" in interest["basis_note"]
+        # 结论条 basis label：无计息信息 → 截止债权发布日（不是截止今日）
+        assert content["conclusion_bar"]["interest_basis_label"] == "截止债权发布日"
+        # 有利息时本息合计 = 本金 + 已知利息
+        if claim.interest_cents:
+            assert interest["total_cents"] == claim.principal_cents + claim.interest_cents
 
     def test_person_simplified(self):
         import asyncio

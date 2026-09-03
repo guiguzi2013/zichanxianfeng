@@ -33,6 +33,7 @@ class ClaimUpdate(BaseModel):
     judicial_status: str | None = None
     listing_price_cents: int | None = None
     deadline: str | None = None
+    extra_fields: dict | None = None
 
 
 class ClaimOut(BaseModel):

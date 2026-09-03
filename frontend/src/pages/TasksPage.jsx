@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Card, Table, Tag, Button, Typography, Spin, message, Tabs, Descriptions, Space, Modal, Form, Input } from 'antd'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { taskApi, authApi } from '../api'
+import { taskApi, authApi, activityApi } from '../api'
+import client from '../api/client'
 import { useAuthStore } from '../store/auth'
 
 const { Title, Text } = Typography
@@ -20,13 +21,32 @@ export default function TasksPage() {
   const tab = params.get('tab') || 'tasks'
   const { user } = useAuthStore()
   const [tasks, setTasks] = useState([])
+  const [valuations, setValuations] = useState([])
+  const [clues, setClues] = useState([])
+  const [myReports, setMyReports] = useState([])   // 报告级列表（每份一行）
   const [loading, setLoading] = useState(true)
+  const [reportKeyword, setReportKeyword] = useState('')  // 2026-09-02 报告搜索
 
+  // 2026-09-02：报告按 债务人/标题 过滤
+  const rkw = reportKeyword.trim().toLowerCase()
+  const filteredReports = rkw
+    ? myReports.filter((r) => `${r.debtor_name || ''} ${r.title || ''}`.toLowerCase().includes(rkw))
+    : myReports
+
+  // 任务原始表格弹窗
   useEffect(() => {
     const load = async () => {
       try {
-        const resp = await taskApi.list()
-        setTasks(resp.data.tasks || [])
+        const [t, v, c, r] = await Promise.all([
+          taskApi.list(),
+          activityApi.list('valuation'),
+          activityApi.list('clue'),
+          client.get('/reports/my/reports'),
+        ])
+        setTasks(t.data.tasks || [])
+        setValuations(v.data.records || [])
+        setClues(c.data.records || [])
+        setMyReports(r.data?.reports || [])
       } catch { /* 拦截器已提示 */ } finally {
         setLoading(false)
       }
@@ -43,31 +63,53 @@ export default function TasksPage() {
   }
 
   const taskColumns = [
-    { title: '任务ID', dataIndex: 'id', width: 80 },
-    { title: '债权数', dataIndex: 'claim_ids', width: 90, render: (v) => (Array.isArray(v) ? v.length : 0) },
+    { title: '任务ID', dataIndex: 'id', width: 70 },
+    {
+      title: '任务名称',
+      dataIndex: 'name',
+      ellipsis: true,
+      render: (v, r) => <Button type="link" style={{ padding: 0, height: 'auto', textAlign: 'left' }} onClick={() => navigate(`/task/${r.id}/edit`)}>{v || `任务#${r.id}`}</Button>,
+    },
+    { title: '债权数', dataIndex: 'claim_ids', width: 80, render: (v) => (Array.isArray(v) ? v.length : 0) },
+    { title: '来源', dataIndex: 'id', width: 90, render: () => <Tag color="blue">智能尽调</Tag> },
     { title: '状态', dataIndex: 'status', width: 100, render: (v) => { const m = STATUS_META[v] || STATUS_META.pending; return <Tag color={m.color}>{m.label}</Tag> } },
-    { title: '进度', dataIndex: 'progress', width: 100, render: (v) => `${v}%` },
+    { title: '进度', dataIndex: 'progress', width: 80, render: (v) => `${v}%` },
     { title: '创建时间', dataIndex: 'created_at', render: (v) => (v ? String(v).replace('T', ' ').slice(0, 16) : '—') },
     {
-      title: '操作', width: 200,
+      title: '操作', width: 100,
       render: (_, record) => (
-        <>
-          {record.status === 'pending' && <Button type="link" onClick={() => startDD(record.id)}>开始尽调</Button>}
-          <Button type="link" disabled={record.status !== 'done' && record.status !== 'partial'} onClick={() => navigate(`/report/${record.id}`)}>查看报告</Button>
-        </>
+        record.status === 'pending'
+          ? <Button type="link" onClick={() => startDD(record.id)}>开始尽调</Button>
+          : null
       ),
     },
   ]
 
+  const activityColumns = [
+    { title: '时间', dataIndex: 'created_at', width: 140, render: (v) => (v ? String(v).replace('T', ' ').slice(0, 16) : '—') },
+    { title: '标题', dataIndex: 'title', width: 240, render: (v) => <Text strong>{v}</Text> },
+    { title: '摘要', dataIndex: 'summary', render: (v) => v || '—' },
+  ]
+
   const doneTasks = tasks.filter((t) => t.status === 'done' || t.status === 'partial')
+  // 报告级列表：每份报告一行（按债务人），点哪行看哪份
   const reportColumns = [
-    { title: '报告ID', dataIndex: 'id', width: 80 },
-    { title: '债权数', dataIndex: 'claim_ids', width: 90, render: (v) => (Array.isArray(v) ? v.length : 0) },
-    { title: '状态', dataIndex: 'status', width: 100, render: (v) => { const m = STATUS_META[v] || STATUS_META.pending; return <Tag color={m.color}>{m.label}</Tag> } },
-    { title: '完成时间', dataIndex: 'updated_at', render: (v) => (v ? String(v).replace('T', ' ').slice(0, 16) : '—') },
+    { title: '报告ID', dataIndex: 'report_id', width: 80 },
     {
-      title: '操作', width: 120,
-      render: (_, record) => <Button type="link" onClick={() => navigate(`/report/${record.id}`)}>查看报告 / 下载PDF</Button>,
+      title: '债务人', dataIndex: 'debtor_name', ellipsis: true,
+      render: (v) => <Text strong>{v ? String(v).split('；')[0] : '—'}</Text>,
+    },
+    { title: '版本', dataIndex: 'version', width: 70, render: (v) => `v${v || 1}` },
+    {
+      title: '状态', dataIndex: 'task_status', width: 100,
+      render: (v) => { const m = STATUS_META[v] || STATUS_META.pending; return <Tag color={m.color}>{m.label}</Tag> },
+    },
+    { title: '生成时间', dataIndex: 'created_at', render: (v) => (v ? String(v).replace('T', ' ').slice(0, 16) : '—') },
+    {
+      title: '操作', width: 110,
+      render: (_, record) => (
+        <Button type="link" onClick={() => navigate(`/report/${record.task_id}/${record.report_id}`)}>查看报告</Button>
+      ),
     },
   ]
 
@@ -113,8 +155,48 @@ export default function TasksPage() {
         activeKey={tab}
         onChange={setTab}
         items={[
-          { key: 'tasks', label: `我的任务（${tasks.length}）`, children: <Card>{loading ? <Spin /> : <Table rowKey="id" columns={taskColumns} dataSource={tasks} pagination={{ pageSize: 10 }} />}</Card> },
-          { key: 'reports', label: `我的报告（${doneTasks.length}）`, children: <Card>{loading ? <Spin /> : <Table rowKey="id" columns={reportColumns} dataSource={doneTasks} pagination={{ pageSize: 10 }} />}</Card> },
+          {
+            key: 'tasks',
+            label: `我的任务（${tasks.length + valuations.length + clues.length}）`,
+            children: loading ? <Spin /> : (
+              <>
+                {/* 区块一：智能尽调任务 */}
+                <Card title={<span><Tag color="blue">智能尽调</Tag> 债权尽调任务（{tasks.length}）</span>} style={{ marginBottom: 16 }}>
+                  <Table rowKey="id" columns={taskColumns} dataSource={tasks} pagination={{ pageSize: 10 }} scroll={{ x: 'max-content' }} />
+                </Card>
+                {/* 区块二：土地厂房估价 */}
+                <Card title={<span><Tag color="orange">土地厂房估价</Tag> 估价记录（{valuations.length}）</span>} style={{ marginBottom: 16 }}>
+                  {valuations.length ? <Table rowKey="id" columns={activityColumns} dataSource={valuations} pagination={{ pageSize: 10 }} /> : <Text type="secondary">暂无估价记录，去「土地厂房估价」试试</Text>}
+                </Card>
+                {/* 区块三：财产线索 */}
+                <Card title={<span><Tag color="green">财产线索</Tag> 查询记录（{clues.length}）</span>}>
+                  {clues.length ? <Table rowKey="id" columns={activityColumns} dataSource={clues} pagination={{ pageSize: 10 }} /> : <Text type="secondary">暂无财产线索查询记录，去「财产线索」试试</Text>}
+                </Card>
+              </>
+            ),
+          },
+          {
+            key: 'reports',
+            label: `我的报告（${myReports.length}）`,
+            children: loading ? <Spin /> : (
+              <>
+                {/* 2026-09-02：报告搜索（债务人/标题过滤） */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                  <Input.Search allowClear placeholder="搜索债务人/标题" style={{ width: 240 }} onSearch={(v) => setReportKeyword(v)} />
+                </div>
+                {/* 区块一：智能尽调报告（每份一行，按债务人）*/}
+                <Card title={<span><Tag color="blue">智能尽调</Tag> 尽调报告（{filteredReports.length}）</span>} style={{ marginBottom: 16 }}>
+                  <Table rowKey="report_id" columns={reportColumns} dataSource={filteredReports} pagination={{ pageSize: 10 }} scroll={{ x: 'max-content' }} />
+                </Card>
+                {/* 区块二：估价报告（后期） */}
+                <Card title={<span><Tag color="orange">土地厂房估价</Tag> 估价报告（{valuations.length}）</span>}>
+                  {valuations.length
+                    ? <Table rowKey="id" columns={activityColumns} dataSource={valuations} pagination={{ pageSize: 10 }} />
+                    : <Text type="secondary">暂无估价报告（后期将支持生成土地厂房/商业房产估价报告）</Text>}
+                </Card>
+              </>
+            ),
+          },
           { key: 'profile', label: '账户信息', children: profileTab },
         ]}
       />

@@ -1,8 +1,10 @@
 import { useState, useMemo } from 'react'
 import { Card, Input, Button, Tag, Alert, Spin, Descriptions, Table, Space, Typography, Row, Col, Upload, Modal, message } from 'antd'
-import { SearchOutlined, FundOutlined, FileTextOutlined } from '@ant-design/icons'
+import { SearchOutlined, FundOutlined, FileTextOutlined, ReloadOutlined } from '@ant-design/icons'
+import { useNavigate } from 'react-router-dom'
 import client from '../api/client'
 import { cluesApi } from '../api'
+import { useAuthStore } from '../store/auth'
 
 const { Text, Title } = Typography
 
@@ -108,6 +110,10 @@ function isPersonName(name) {
 }
 
 export default function PropertyCluesPage() {
+  const navigate = useNavigate()
+  const token = useAuthStore((s) => s.token)
+  const user = useAuthStore((s) => s.user)
+  const isAdmin = user?.role === 'admin' // 强制刷新仅管理员可用
   const [names, setNames] = useState('')
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState('')
@@ -123,6 +129,7 @@ export default function PropertyCluesPage() {
   const [caseLoading, setCaseLoading] = useState(false)
   const [resolveLoading, setResolveLoading] = useState(false)
   const [resolveResult, setResolveResult] = useState(null) // {name, matched, registered_name, calls_used}
+  const [refreshLoading, setRefreshLoading] = useState(null) // 正在单条强制刷新的企业名
 
   // 名称变体解析（查无此名时）：尝试常见变体，找到现用名即停
   const resolveName = async (name) => {
@@ -182,6 +189,30 @@ export default function PropertyCluesPage() {
       message.error(e.message || '深度调查失败')
     } finally {
       setDeepLoading(null)
+    }
+  }
+
+  // 单条强制刷新：删除该企业全部缓存后重新实查（会重新消耗积分），仅影响该企业
+  const refreshCompany = async (company) => {
+    try {
+      setRefreshLoading(company)
+      const resp = await client.post('/qcc/refresh', { company, mode: 'clues' })
+      if (resp.ok) {
+        // 用新结果替换该企业在结果列表中的条目
+        setResults((prev) => prev.map((r) => {
+          if (r.company === company) {
+            return { ...r, data: { ...resp.data, cached: false }, refreshed: true }
+          }
+          return r
+        }))
+        message.success(`已重新查询「${company}」（删除 ${resp.deleted ?? 0} 条缓存）`)
+      } else {
+        message.error(resp.error || `刷新「${company}」失败`)
+      }
+    } catch (e) {
+      message.error(e.message || `刷新「${company}」失败`)
+    } finally {
+      setRefreshLoading(null)
     }
   }
 
@@ -305,6 +336,17 @@ export default function PropertyCluesPage() {
     const list = pendingNames
     if (list.length === 0) {
       setError('请先输入企业名称（每行一个），或上传判决书自动识别')
+      return
+    }
+    // 未登录：可浏览页面/识别主体，但发起企查查查询需先登录（保护积分成本）
+    if (!token) {
+      Modal.confirm({
+        title: '登录后即可查询',
+        content: '财产线索查询需要消耗企查查积分，请先登录后再发起查询。（未登录可上传材料识别主体、浏览页面）',
+        okText: '去登录',
+        cancelText: '取消',
+        onOk: () => navigate('/login'),
+      })
       return
     }
     // 查询前规则校验（免费）：有可疑名称时先让用户确认，避免浪费企查查积分
@@ -470,16 +512,29 @@ export default function PropertyCluesPage() {
         }
         extra={
           !isPerson && regData['企业名称'] && (
-            <Button
-              size="small"
-              type="primary"
-              ghost
-              icon={<FundOutlined />}
-              loading={deepLoading === r.company}
-              onClick={() => startDeepInvestigation(r.company, 16)}
-            >
-              深度调查
-            </Button>
+            <Space size={4}>
+              <Button
+                size="small"
+                type="primary"
+                ghost
+                icon={<FundOutlined />}
+                loading={deepLoading === r.company}
+                onClick={() => startDeepInvestigation(r.company, 16)}
+              >
+                深度调查
+              </Button>
+              {isAdmin && (
+                <Button
+                  size="small"
+                  icon={<ReloadOutlined />}
+                  loading={refreshLoading === r.company}
+                  onClick={() => refreshCompany(r.company)}
+                  title="强制刷新：删除该企业缓存后重新实查（会重新消耗积分，仅管理员可用）"
+                >
+                  强制刷新
+                </Button>
+              )}
+            </Space>
           )
         }
       >
@@ -513,6 +568,16 @@ export default function PropertyCluesPage() {
               若材料中的自然人与上述企业存在该职务关联，可据此确认身份、显著降低重名风险。
             </Text>
           </div>
+        )}
+
+        {/* 企业更名提示（2026-08-31：已按现名自动重查） */}
+        {!isPerson && data.renamed && data.renamed.new_name && (
+          <Alert
+            type="info"
+            showIcon
+            message={`企业已更名：由「${data.renamed.old_name}」更名为「${data.renamed.new_name}」，已按现名查询财产线索`}
+            style={{ marginBottom: 12 }}
+          />
         )}
 
         {/* 名称与工商不符提示（曾用名/简称） */}
@@ -681,7 +746,7 @@ export default function PropertyCluesPage() {
           <div style={{ marginTop: 14, padding: 14, background: '#F7F9FC', borderRadius: 8, border: '1px solid var(--border)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
               <FileTextOutlined style={{ color: 'var(--primary)' }} />
-              <Text strong>材料识别结果（{recognized.method === 'llm' ? 'AI 识别' : '规则识别'} · {recognized.entities.length} 个主体）</Text>
+              <Text strong>材料识别结果（{recognized.method === 'llm' ? '系统识别' : '规则识别'} · {recognized.entities.length} 个主体）</Text>
               <Button size="small" style={{ marginLeft: 'auto' }} onClick={applyRecognized}>重新填入输入框</Button>
             </div>
             <Space size={[6, 6]} wrap>

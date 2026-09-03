@@ -36,3 +36,19 @@ def require_editor(user: User = Depends(get_current_user)) -> User:
     if user.role not in ("editor", "admin"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要运营编辑权限")
     return user
+
+
+def require_land_price_perm(user: User = Depends(get_current_user)) -> User:
+    """土地价格库录入权限：admin 或（editor 且 land_price_perm=True）"""
+    if user.role == "admin":
+        return user
+    if user.role == "editor" and getattr(user, "land_price_perm", False):
+        return user
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无土地价格库录入权限（请联系管理员开通）")
+
+
+def require_land_price_admin(user: User = Depends(get_current_user)) -> User:
+    """土地价格库删除权限：仅 admin"""
+    if user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="仅管理员可删除土地价格记录")
+    return user

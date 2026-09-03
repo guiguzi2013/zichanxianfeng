@@ -174,7 +174,7 @@ export default function QccDemoPage() {
   ]
 
   return (
-    <div style={{ maxWidth: 1080, margin: '0 auto', padding: '24px 16px' }}>
+    <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 16px' }}>
       <Title level={3} style={{ marginBottom: 4 }}>
         {isBiz ? '企业尽调报告' : '司法风险报告'} · 企查查 Demo
       </Title>

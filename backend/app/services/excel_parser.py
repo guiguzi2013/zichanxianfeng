@@ -10,20 +10,36 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# 表头同义词词典：标准字段 -> 表头关键词列表
+# 表头同义词词典：标准字段 -> 表头关键词列表（依据 8 份真实债权表格扩充）
 HEADER_SYNONYMS: dict[str, list[str]] = {
-    "debtor_name": ["债务人", "债权项目", "借款人", "企业名称", "债务人名称", "债务企业", "借款企业"],
-    "principal_text": ["本金", "债权本金", "借款本金", "贷款本金"],
-    "interest_text": ["利息", "债权利息", "欠息", "利息罚息", "应收利息"],
+    "debtor_name": ["债务人", "债权项目", "借款人", "企业名称", "债务人名称", "债务企业", "借款企业", "主债务人", "借款人名称"],
+    "principal_text": ["本金", "债权本金", "借款本金", "贷款本金", "本金余额", "收购本金", "本金万元", "债权本金（万元）"],
+    "interest_text": ["利息", "债权利息", "欠息", "利息罚息", "应收利息", "利息余额", "利息(基准日）", "利息（0630）", "债权利息(截至"],
     "fees_text": ["费用", "诉讼费", "保全费", "实现债权费用"],
-    "guaranty_type": ["担保类型", "担保方式", "担保", "担保形式"],
-    "guarantor": ["保证人", "担保人", "连带保证", "保证人名称"],
-    "collateral": ["抵押物", "抵押物情况", "抵押物描述", "抵质押物", "担保物", "抵押情况"],
-    "judicial_status": ["执行法院", "司法状态", "诉讼状态", "法院", "受理法院", "管辖法院"],
+    "guaranty_type": ["担保类型", "担保方式", "担保", "担保形式", "担保情况"],
+    "guarantor": ["保证人", "担保人", "连带保证", "保证人名称", "担保人（含抵押）", "保证人名称及保证金额"],
+    "collateral": ["抵押物", "抵押物情况", "抵押物描述", "抵质押物", "担保物", "抵押情况", "抵/质押情况", "抵押物情况描述", "抵质押物情况", "抵押", "额外查封物"],
+    "mortgagor": ["抵押人"],
+    "collateral_type": ["抵押物类型", "抵质押资产分类", "抵押资产分类", "资产分类"],
+    "judicial_status": ["执行法院", "司法状态", "诉讼状态", "法院", "受理法院", "管辖法院", "诉讼进度", "诉讼、查封情况"],
+    "region": ["地区", "所在地", "借款人所处地级市", "地级市"],
+    "batch": ["批次", "资产包名称", "资产包", "项目名称"],
+    "loan_bank": ["贷款行", "贷款银行", "原贷款机构"],
     "listing_price_text": ["挂牌价", "起拍价", "评估价", "债权转让价", "转让价格"],
-    "deadline": ["截止日期", "到期日", "拍卖时间", "报名截止", "挂牌截止"],
-    "extra_notes": ["备注", "说明", "其他", "附注"],
+    "deadline": ["截止日期", "到期日", "拍卖时间", "报名截止", "挂牌截止", "转让基准日"],
+    "interest_base_date": ["计息基准日", "转让基准日", "利息截止", "截至"],
+    "mortgage_amount": ["抵押金额", "抵押价值", "最高额抵押", "贷款时估值"],
+    "mortgage_rank": ["抵押顺位", "顺位", "第一顺位", "首押"],
+    "seizure": ["查封情况", "查封", "首封", "轮候"],
+    "collateral_status": ["抵押物现状", "现状", "已抵债", "已拍卖", "清场"],
+    "debtor_status": ["债务人状态", "经营状态", "主债务人情况"],
+    "guarantor_status": ["保证人情况", "担保人情况"],
+    "extra_notes": ["备注", "说明", "其他", "附注", "债务人及抵押担保尽调情况"],
 }
+
+# 完整度判定：核心字段 + 重要字段
+CORE_FIELDS = ["debtor_name", "principal_text", "collateral"]
+IMPORTANT_FIELDS = ["interest_text", "guarantor", "judicial_status", "region", "collateral_type", "mortgagor"]
 
 # 表头单位解析：列名里的单位词
 _UNIT_PATTERN = re.compile(r"[（(]?\s*(万亿|亿|万|元)\s*[)）]?")
@@ -51,18 +67,38 @@ def build_mapping(headers: list[str]) -> dict[str, str]:
     return mapping
 
 
+def extract_interest_cutoff(header_raw: str | None) -> str | None:
+    """从利息列表头提取计息截止日，如『债权利息(截至2025/4/20）』→ '2025-04-20'。
+
+    权威来源（银行/AMC 表格、判决书）通常标注利息截止日，用于把利息续算到报告当日。
+    返回 YYYY-MM-DD 或 None。
+    """
+    if not header_raw:
+        return None
+    m = re.search(r"(?:截至|截止|截止到|至)\s*(\d{4})[年/.-](\d{1,2})[月/.-](\d{1,2})日?", header_raw)
+    if m:
+        try:
+            y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            return f"{y:04d}-{mo:02d}-{d:02d}"
+        except ValueError:
+            return None
+    return None
+
+
 def _detect_unit(raw: str) -> int:
-    """表头里带 '万'/'亿' 返回倍率，否则 1"""
+    """表头里带 '万'/'亿' 返回"值→元"倍率，否则 1（值本身按元计）。
+
+    与 _to_cents 内嵌单位倍率一致：万元=10^4（元），亿元=10^8，万亿=10^12。
+    _to_cents 最终 ×100 转分。
+    """
     m = re.search(r"[（(]\s*(万亿|亿|万|元)\s*[)）]", raw) or re.search(r"(万亿|亿|万)", raw)
     if not m:
         return 1
-    return {"万亿": 10**8, "亿": 10**4, "万": 10**2, "元": 1}.get(m.group(1), 1)
-    # 说明：返回的是"转为分"的倍率：万元*10000*100 = 值*10^6 -> 这里先按 10^2 表示"万元->元"的换算？不对。
-    # 修正：值(万元) * 10000(元/万) * 100(分/元) = 值 * 1,000,000
+    return {"万亿": 10**12, "亿": 10**8, "万": 10**4, "元": 1}.get(m.group(1), 1)
 
 
 def _to_cents(value: Any, unit_mult: int) -> int | None:
-    """值转分。unit_mult 为表头单位倍率（万元=10000）。"""
+    """值转分。unit_mult 为表头单位倍率（"值→元"，万元=10^4）。"""
     if value is None:
         return None
     if isinstance(value, (int, float)):
@@ -84,23 +120,32 @@ def _to_cents(value: Any, unit_mult: int) -> int | None:
 def _apply_unit_inheritance(rows: list[dict[str, Any]], unit_mult: dict[str, int]) -> None:
     """无单位金额列继承主金额列（principal_text）的单位倍率。
 
-    场景：表头"债权本金（万元）"标了单位，但"债权利息"没标，实际同为万元。
-    规则：对 unit_mult 中未出现的金额字段，若该行 principal_text 已解析且其倍率>1，
-    则按同倍率重算该字段（仅当原值较小、疑似漏标单位时）。
+    行业常识（用户确认 2026-08-25）：同一张表/文档内计量单位一般一致。
+    若本金列标了单位（如"债权本金（万元）"），而利息/费用列没标，
+    则利息/费用按本金列同倍率解析（即同为万元），避免"749万 但利息 627元"的常识性错误。
+    规则：取所有金额列中最大的"值→元"倍率（>1 才继承），无单位列按此重算。
     """
     amount_fields = ("principal_text", "interest_text", "fees_text", "listing_price_text")
-    main_mult = unit_mult.get("principal_text", 1)
+    # 收集各列已识别的倍率，取最大（>1）作为同表默认单位
+    table_mult = 1
+    for f in amount_fields:
+        m = unit_mult.get(f, 1)
+        if m > table_mult:
+            table_mult = m
+    if table_mult <= 1:
+        return  # 全表都无单位，无从继承
     for row in rows:
+        main_val = row.get("principal_text")
         for field in amount_fields:
-            if field in unit_mult:
-                continue  # 该列表头自带单位
+            if field in unit_mult and unit_mult[field] > 1:
+                continue  # 该列自带单位，已正确解析
             value = row.get(field)
-            if value is None or not isinstance(value, int):
-                continue
-            # 原值被当"元"解析且 < 1亿分（=100万元），疑似实际为万元
-            if main_mult > 1 and value < 100_000_000:
-                row[field] = int(round(value * main_mult))
-                row[f"{field}_unit_inherited"] = True
+            # 纯数字金额（已按"元"解析）且明显小于本金（<10%，说明是"元"而非"万元"量级）
+            # 此时按同表单位（万元）重算，避免"749万本金、利息627元"的常识性错误
+            if isinstance(value, int) and value > 0 and isinstance(main_val, int) and main_val > 0:
+                if value < main_val * 0.10:
+                    row[field] = int(round(value * table_mult))
+                    row[f"{field}_unit_inherited"] = True
 
 
 def parse_excel(file_bytes: bytes, filename: str) -> tuple[list[dict[str, Any]], dict, list[str]]:
@@ -130,6 +175,12 @@ def _parse_xlsx(file_bytes: bytes) -> tuple[list[dict[str, Any]], dict, list[str
     mapping = build_mapping(header)
     unmapped = [h for h in header if h and h not in mapping.values()]
 
+    # 从利息列表头提取计息截止日（如 债权利息(截至2025/4/20）→ 2025-04-20）
+    interest_cutoff = None
+    interest_raw = mapping.get("interest_text")
+    if interest_raw:
+        interest_cutoff = extract_interest_cutoff(interest_raw)
+
     # 单位倍率
     unit_mult: dict[str, int] = {}
     for field, raw in mapping.items():
@@ -152,6 +203,8 @@ def _parse_xlsx(file_bytes: bytes) -> tuple[list[dict[str, Any]], dict, list[str
                 row[field] = _to_cents(value, unit_mult[field])
             else:
                 row[field] = str(value).strip() if value is not None else None
+        if interest_cutoff and "interest_base_date" not in row:
+            row["interest_base_date"] = interest_cutoff
         rows.append(row)
     _apply_unit_inheritance(rows, unit_mult)
     return rows, mapping, unmapped
@@ -177,6 +230,12 @@ def _parse_csv(file_bytes: bytes) -> tuple[list[dict[str, Any]], dict, list[str]
     mapping = build_mapping(header)
     unmapped = [h for h in header if h and h not in mapping.values()]
 
+    # 从利息列表头提取计息截止日
+    interest_cutoff = None
+    interest_raw = mapping.get("interest_text")
+    if interest_raw:
+        interest_cutoff = extract_interest_cutoff(interest_raw)
+
     unit_mult: dict[str, int] = {}
     for field, raw in mapping.items():
         if field in ("principal_text", "interest_text", "fees_text", "listing_price_text"):
@@ -200,6 +259,8 @@ def _parse_csv(file_bytes: bytes) -> tuple[list[dict[str, Any]], dict, list[str]
                 row[field] = _to_cents(value, unit_mult[field])
             else:
                 row[field] = value
+        if interest_cutoff and "interest_base_date" not in row:
+            row["interest_base_date"] = interest_cutoff
         rows.append(row)
     _apply_unit_inheritance(rows, unit_mult)
     return rows, mapping, unmapped

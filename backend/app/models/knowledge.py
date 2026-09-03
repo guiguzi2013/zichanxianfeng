@@ -18,6 +18,8 @@ class LegalDoc(Base):
     __tablename__ = "legal_docs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    category: Mapped[str | None] = mapped_column(String(50), default="尽调法规")  # 知识分类
+    source_type: Mapped[str | None] = mapped_column(String(20), default="manual")  # manual=文字录入(可编辑) / upload=文档上传(只读可删)
     title: Mapped[str] = mapped_column(String(300), nullable=False)   # 文件名称
     doc_no: Mapped[str | None] = mapped_column(String(100))           # 文号（如 法释〔2017〕8号）
     issuer: Mapped[str | None] = mapped_column(String(100))           # 发布机关
@@ -38,6 +40,8 @@ class KnowledgeCase(Base):
     __tablename__ = "knowledge_cases"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    category: Mapped[str | None] = mapped_column(String(50), default="尽调案例")  # 知识分类
+    source_type: Mapped[str | None] = mapped_column(String(20), default="manual")  # manual=文字录入(可编辑) / upload=文档上传(只读可删)
     title: Mapped[str] = mapped_column(String(300), nullable=False)   # 案例标题
     scenario: Mapped[str | None] = mapped_column(String(100))         # 场景标签（如 抵押物占用）
     tags: Mapped[str | None] = mapped_column(String(300))             # 逗号分隔标签

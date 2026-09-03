@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = 60
     llm_max_retries: int = 1
     # mock 模式：无 API Key 时用预设数据跑通全流程（验收/演示用），生产关闭
-    # 默认 True：没有 .env 时开箱即用；配置了 DEEPSEEK_API_KEY 后可在 .env 设 LLM_MOCK=false 走真实 AI
+    # 默认 True：没有 .env 时开箱即用；配置了 DEEPSEEK_API_KEY 后可在 .env 设 LLM_MOCK=false 走真实模型
     llm_mock: bool = True
 
     # --- 数据库 ---

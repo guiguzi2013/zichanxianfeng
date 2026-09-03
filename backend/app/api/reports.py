@@ -4,7 +4,7 @@ import logging
 import os
 import re
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -18,6 +18,55 @@ from .deps import get_current_user
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 settings = get_settings()
+
+
+@router.post("/{report_id}/re-diligence", response_model=ApiResponse)
+def rediligence_report(report_id: int, background: BackgroundTasks, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """用户编辑/补齐债权字段后重新尽调：用更新后的债权数据重跑报告（version+1，历史版本保留）"""
+    from sqlalchemy import select
+
+    report = db.scalar(
+        select(Report).join(Task, Report.task_id == Task.id)
+        .where(Report.id == report_id, Task.user_id == user.id)
+    )
+    if report is None:
+        raise err("报告不存在", http_status=404)
+    from ..services.due_diligence import regenerate_report
+    background.add_task(regenerate_report, report_id)
+    return ok({"report_id": report_id, "version": (report.version or 1) + 1}, "重新尽调已启动，完成后可查看新版本报告")
+
+
+@router.get("/my/reports", response_model=ApiResponse)
+def my_reports(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """当前用户的全部报告（报告级列表，每份一行，含债务人名），供『我的报告』按债务人展示"""
+    from sqlalchemy import select
+
+    rows = db.execute(
+        select(Report, Task).join(Task, Report.task_id == Task.id)
+        .where(Task.user_id == user.id)
+        .order_by(Report.id.desc())
+    ).all()
+    out = []
+    for report, task in rows:
+        debtor = ""
+        try:
+            content = report.content
+            if content:
+                if isinstance(content, str):
+                    content = json.loads(content)
+                debtor = (content.get("report_meta") or {}).get("debtor_name") or ""
+        except Exception:  # noqa: BLE001
+            debtor = ""
+        out.append({
+            "report_id": report.id,
+            "task_id": report.task_id,
+            "claim_id": report.claim_id,
+            "version": report.version,
+            "debtor_name": debtor,
+            "task_status": task.status,
+            "created_at": report.created_at.isoformat() if report.created_at else None,
+        })
+    return ok({"reports": out})
 logger = logging.getLogger(__name__)
 
 
@@ -36,7 +85,10 @@ def _report_to_out(report: Report) -> dict:
 @router.get("/{task_id}", response_model=ApiResponse)
 def get_task_reports(task_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     task = db.get(Task, task_id)
-    if task is None or task.user_id != user.id:
+    if task is None:
+        raise err("任务不存在", http_status=404)
+    # 本人任务 或 管理后台（admin/editor 查看用户报告处理投诉）可读
+    if task.user_id != user.id and user.role not in ("admin", "editor"):
         raise err("任务不存在", http_status=404)
     reports = db.query(Report).filter(Report.task_id == task_id).all()
     return ok({"reports": [_report_to_out(r) for r in reports]})
@@ -62,10 +114,14 @@ def _pdf_job(report_id: int):
         report = db.get(Report, report_id)
         if report is None or not report.content:
             return
-        content = json.loads(report.content)
+        content = report.content
+        if isinstance(content, str):
+            content = json.loads(content)
         path = generate_report_pdf(report_id, content)
         report.pdf_path = path
         db.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("pdf job failed for report %s", report_id)
     finally:
         db.close()
 
@@ -76,7 +132,12 @@ def download_pdf(report_id: int, user: User = Depends(get_current_user), db: Ses
     if report is None or not report.pdf_path or not os.path.exists(report.pdf_path):
         raise err("PDF 尚未生成", http_status=404)
     task = db.get(Task, report.task_id)
-    if task is None or task.user_id != user.id:
+    if task is None:
+        raise err("无权访问", http_status=403)
+    # 员工/管理员仅查看报告页，不能下载 PDF（防止泄露用户报告）
+    if task.user_id != user.id and user.role in ("admin", "editor"):
+        raise err("管理后台仅可查看报告，不能下载 PDF", http_status=403)
+    if task.user_id != user.id:
         raise err("无权访问", http_status=403)
     return FileResponse(report.pdf_path, filename=os.path.basename(report.pdf_path), media_type="application/pdf")
 
@@ -85,26 +146,49 @@ def download_pdf(report_id: int, user: User = Depends(get_current_user), db: Ses
 async def upload_supplements(
     report_id: int,
     background: BackgroundTasks,
-    files: list[UploadFile] = File(...),
+    note: str | None = Form(default=None),
+    files: list[UploadFile] = File(default=[]),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """补充材料上传（P1 完善 AI 分发与重新生成）"""
+    """补充信息（P1 完善系统分发与重新生成）
+
+    - note: 用户补充的文字信息（可选）
+    - files: 补充材料文件（Word/PDF/TXT/图片等，可选）
+    无论补充文字或文件，都会触发报告重新生成（结合原信息 + 补充信息）。
+    """
     report = db.get(Report, report_id)
     if report is None:
         raise err("报告不存在", http_status=404)
     task = db.get(Task, report.task_id)
     if task is None or task.user_id != user.id:
         raise err("无权访问", http_status=403)
+    if not note and not files:
+        raise err("请补充文字信息或上传材料")
 
     os.makedirs(settings.upload_dir, exist_ok=True)
     saved = []
     parsed = []
+    skipped_duplicates = []
     for f in files:
         data = await f.read()
+        # 魔数校验（防伪装文件）+ 文件指纹（去重）
+        from ..services.file_validate import validate_upload
+
+        v = validate_upload(f.filename or "file", data, getattr(f, "last_modified", None))
+        if not v.get("ok"):
+            raise err(v.get("error", "文件校验失败"))
+        # 指纹去重：同报告内重复文件跳过
+        fingerprint = v["fingerprint"]
+        dup = db.scalar(select(Upload).where(
+            Upload.report_id == report_id, Upload.stored_path.like(f"%{fingerprint}%")
+        ))
+        if dup:
+            skipped_duplicates.append(f.filename)
+            continue
         # 文件名消毒，防路径穿越
         safe_name = re.sub(r"[^\w.\-\u4e00-\u9fff]", "_", f.filename or "file")
-        path = os.path.join(settings.upload_dir, f"{report_id}_{safe_name}")
+        path = os.path.join(settings.upload_dir, f"{report_id}_{fingerprint}_{safe_name}")
         with open(path, "wb") as fp:
             fp.write(data)
         upload = Upload(
@@ -115,7 +199,7 @@ async def upload_supplements(
         db.add(upload)
         db.flush()
 
-        # AI 解析分发（尽力而为，失败不阻塞上传）
+        # 系统解析分发（尽力而为，失败不阻塞上传）
         try:
             from ..services.supplement_parser import classify_content, extract_text_from_file
 
@@ -130,19 +214,27 @@ async def upload_supplements(
 
         saved.append(safe_name)
 
-    # 记录到报告的 supplements（JSON），供重新生成引用
+    # 记录到报告的 supplements（JSON），供重新生成引用；note 作为用户补充文字一并记录
     existing = json.loads(report.supplements) if report.supplements else []
+    if note and note.strip():
+        existing.append({"type": "note", "text": note.strip()[:5000]})
     existing.extend(parsed)
     report.supplements = json.dumps(existing, ensure_ascii=False)
     db.commit()
 
-    # 触发后台重新生成报告（version+1）
-    if parsed:
+    # 触发后台重新生成报告（version+1）：只要有补充（文字或文件）就重新生成
+    if note and note.strip():
         from ..services.due_diligence import regenerate_report
 
         background.add_task(regenerate_report, report.id)
 
-    return ok({"uploaded": saved, "parsed": parsed, "regenerating": bool(parsed)}, f"上传并解析完成（{len(parsed)} 份已识别分发），报告重新生成中…")
+    return ok({
+        "uploaded": saved,
+        "parsed": parsed,
+        "note_added": bool(note and note.strip()),
+        "skipped_duplicates": skipped_duplicates,
+        "regenerating": bool(parsed) or bool(note and note.strip()),
+    }, "补充信息已记录，报告重新生成中…")
 
 
 @router.get("/{report_id}/versions", response_model=ApiResponse)
@@ -152,7 +244,8 @@ def list_report_versions(report_id: int, user: User = Depends(get_current_user),
     if report is None:
         raise err("报告不存在", http_status=404)
     task = db.get(Task, report.task_id)
-    if task is None or task.user_id != user.id:
+    # 本人 或 管理后台（admin/editor 查看用户报告处理投诉）可读
+    if task is None or (task.user_id != user.id and user.role not in ("admin", "editor")):
         raise err("无权访问", http_status=403)
     versions = db.query(ReportVersion).filter(ReportVersion.report_id == report_id).order_by(ReportVersion.version.desc()).all()
     return ok({
@@ -175,7 +268,8 @@ def get_report_version(report_id: int, version: int, user: User = Depends(get_cu
     if report is None:
         raise err("报告不存在", http_status=404)
     task = db.get(Task, report.task_id)
-    if task is None or task.user_id != user.id:
+    # 本人 或 管理后台（admin/editor 查看用户报告处理投诉）可读
+    if task is None or (task.user_id != user.id and user.role not in ("admin", "editor")):
         raise err("无权访问", http_status=403)
     v = db.query(ReportVersion).filter(ReportVersion.report_id == report_id, ReportVersion.version == version).first()
     if v is None:

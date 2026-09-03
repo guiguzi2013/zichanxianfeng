@@ -12,11 +12,15 @@ from .audit_log import AuditLog
 from .usage_log import UsageLog
 from .notice import Notice
 from .login_log import LoginLog
+from .login_session import LoginSession
 from .feedback import Feedback
 from .auction_stat import AuctionStat
 from .amc_stat import AmcStat
 from .macro_kpi import MacroKpi
 from .knowledge import LegalDoc, KnowledgeCase
+from .activity_record import ActivityRecord
+from .land_price_ref import LandPriceRef
+from .clue_report import ClueReport
 
 __all__ = [
     "User",
@@ -32,10 +36,14 @@ __all__ = [
     "UsageLog",
     "Notice",
     "LoginLog",
+    "LoginSession",
     "Feedback",
     "AuctionStat",
     "AmcStat",
     "MacroKpi",
     "LegalDoc",
     "KnowledgeCase",
+    "ActivityRecord",
+    "LandPriceRef",
+    "ClueReport",
 ]

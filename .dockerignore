@@ -1,0 +1,34 @@
+# 资产先锋 Docker 构建忽略（build context = 项目根）
+# 本地运行产物 / 密钥 / 大目录不进镜像
+
+# 密钥与本地配置
+**/.env
+backend/.env
+deploy/.env
+
+# Python
+**/__pycache__
+**/.venv
+**/*.pyc
+backend/.pytest_cache
+
+# Node
+frontend/node_modules
+frontend/src
+frontend/*.config.js
+frontend/package*.json
+frontend/index.html
+
+# 运行时数据（不进镜像；运行数据走 volume，迁移用卷/数据目录拷贝）
+backend/data/app.db
+backend/data/app.db.bak
+backend/data/app.db-*
+backend/data/uploads
+backend/data/pdf
+backend/data/*.log
+
+# 开发/杂项（注意：不要全局排除图片——frontend/dist/logo.png 是 PDF 封面资源）
+.pytmp
+docs
+参考图
+sub2api-src

@@ -30,7 +30,7 @@ class Claim(Base):
     listing_price_cents: Mapped[int | None] = mapped_column(Integer)
     deadline: Mapped[str | None] = mapped_column(String(20))  # YYYY-MM-DD
 
-    # AI 判断与完整度
+    # 系统判断与完整度
     debtor_type: Mapped[str | None] = mapped_column(String(10))  # enterprise / person
     completeness: Mapped[str | None] = mapped_column(String(10))  # green / yellow / red
     missing_fields: Mapped[str | None] = mapped_column(Text)  # JSON list

@@ -30,7 +30,6 @@
   .toc h2 { color: #1a5fb4; border-bottom: 2pt solid #1a5fb4; padding-bottom: 4pt; }
   .toc ul { list-style: none; padding-left: 0; }
   .toc li { margin-bottom: 6pt; }
-  .toc .sub { padding-left: 18pt; font-size: 10pt; color: #555; }
 
   /* 标题 */
   h2.sec { color: #1a5fb4; border-bottom: 1pt solid #1a5fb4; padding-bottom: 3pt; margin-top: 22pt; page-break-after: avoid; }
@@ -69,26 +68,27 @@
 <div class="toc">
   <h2>目 录</h2>
   <ul>
-    <li>一、投资决策摘要</li>
+    <li>一、尽调结论摘要</li>
     <li>二、重要提醒</li>
     <li>三、债权基本情况</li>
-    <li>四、债务人调查</li>
-    <li>五、担保人调查</li>
-    <li>六、抵押物分析</li>
-    <li>七、法律文书与法规依据</li>
-    <li>八、风控评估</li>
-    <li>九、处置建议与投资决策</li>
+    <li>四、法律文件完备性</li>
+    <li>五、债务人调查</li>
+    <li>六、担保人调查</li>
+    <li>七、抵押物分析</li>
+    <li>八、法律文书与法规依据</li>
+    <li>九、司法执行与受偿分析</li>
+    <li>十、风控评估</li>
+    <li>十一、处置方案</li>
+    <li>十二、待补充信息</li>
   </ul>
 </div>
 
 <!-- 一、摘要 -->
-<h2 class="sec">一、投资决策摘要</h2>
+<h2 class="sec">一、尽调结论摘要</h2>
 {% set summary = sections.get('summary') or {} %}
 <table>
   <tbody>
     <tr><td style="width:30%">综合评级</td><td>{{ summary.get('rating') or '⚠️ 需人工核实' }}</td></tr>
-    <tr><td>建议买入价</td><td>{{ summary.get('suggested_buy_ratio') or '⚠️ 需人工核实' }}</td></tr>
-    <tr><td>预计回收</td><td>{{ summary.get('expected_recovery_rate') or '⚠️ 需人工核实' }}</td></tr>
     <tr><td>核心逻辑</td><td>
       <ul>
       {% for item in summary.get('core_logic') or ['⚠️ 需人工核实'] %}
@@ -126,11 +126,15 @@
     <tr><td>利息/罚息</td><td class="num">{{ fmt(bt.get('interest_cents')) }}</td></tr>
     <tr><td>担保类型</td><td>{{ bt.get('guaranty_type') or '⚠️ 需人工核实' }}</td></tr>
     <tr><td>司法状态</td><td>{{ bt.get('judicial_status') or '⚠️ 需人工核实' }}</td></tr>
+    <tr><td>地区</td><td>{{ bt.get('region') or '—' }}</td></tr>
+    <tr><td>抵押物类型</td><td>{{ bt.get('collateral_type') or '—' }}</td></tr>
   </tbody>
 </table>
 {% set idetail = cb.get('interest_detail') or {} %}
-{% if idetail.get('mode') and idetail.get('mode') != 'none' %}
-  <h3>本息计算明细（{{ '按判决书' if idetail.get('mode') == 'with_judgment' else '按LPR估算' }}）</h3>
+{% if idetail.get('mode') == 'missing_start_date' %}
+  <p class="warn">{{ idetail.get('note') or '有利息但无开始日期，无法计算利息。' }}</p>
+{% elif idetail.get('mode') and idetail.get('mode') != 'none' %}
+  <h3>本息计算明细（{{ '按判决书' if idetail.get('mode') == 'with_judgment' else '按LPR估算' }}，计算至{{ idetail.get('end_date') or '报告当日' }}）</h3>
   <table>
     <thead><tr><th>项目</th><th class="num">金额（元）</th><th>说明</th></tr></thead>
     <tbody>
@@ -144,8 +148,25 @@
   <p class="warn">本金信息缺失，无法计算本息（需人工补充）。</p>
 {% endif %}
 
-<!-- 四、债务人调查 -->
-<h2 class="sec">四、债务人调查</h2>
+<!-- 四、法律文件完备性 -->
+<h2 class="sec">四、法律文件完备性</h2>
+{% set lc = sections.get('legal_completeness') or {} %}
+{% if lc.get('items') %}
+  <table>
+    <thead><tr><th>文件/事项</th><th style="width:15%">状态</th><th>说明</th></tr></thead>
+    <tbody>
+    {% for it in lc['items'] %}
+      <tr><td>{{ it.item }}</td><td>{{ it.status }}</td><td>{{ it.note }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if lc.get('note') %}<p class="note">{{ lc['note'] }}</p>{% endif %}
+{% else %}
+  <p class="note">暂无法律文件信息（待补充）。</p>
+{% endif %}
+
+<!-- 五、债务人调查 -->
+<h2 class="sec">五、债务人调查</h2>
 {% set debtor = sections.get('debtor') or {} %}
 {% if debtor.get('type') == 'person' %}
   <p>自然人债务人：无工商信息，重点关注司法风险。</p>
@@ -170,8 +191,8 @@
   </table>
 {% endif %}
 
-<!-- 五、担保人调查 -->
-<h2 class="sec">五、担保人调查</h2>
+<!-- 六、担保人调查 -->
+<h2 class="sec">六、担保人调查</h2>
 {% set guarantor = sections.get('guarantor') or {} %}
 {% if guarantor.get('present') %}
   <p>存在保证担保，详情需人工核实。</p>
@@ -180,26 +201,64 @@
   <p class="note">无保证担保信息。</p>
 {% endif %}
 
-<!-- 六、抵押物分析 -->
-<h2 class="sec">六、抵押物分析</h2>
+<!-- 七、抵押物分析 -->
+<h2 class="sec">七、抵押物分析</h2>
 {% set coll = sections.get('collateral') or {} %}
 {% if coll.get('present') %}
-  {% for item in coll.get('items') or [] %}
-    <p>{{ item.description }}</p>
-    <p class="warn">估值数据不足（公开渠道限制），建议专业评估机构出具正式评估报告。</p>
-  {% endfor %}
+  <p>{{ coll.get('collateral_desc') or '—' }}</p>
+  {% set val = coll.get('valuation') or {} %}
+  {% if val.get('data_insufficient') %}
+    <p class="warn">{{ val.get('note') or '估值数据不足，建议专业评估机构出具正式评估报告。' }}</p>
+  {% elif val.get('conservative_cents') %}
+    <table>
+      <tbody>
+        <tr><td style="width:30%">估值区间（粗估）</td><td>{{ (val['conservative_cents'] / 100 / 10000) | round(4) }} ~ {{ (val['optimistic_cents'] / 100 / 10000) | round(4) }} 万元</td></tr>
+        <tr><td>单价参考</td><td>{{ val.get('unit_price_range') or '—' }}</td></tr>
+        <tr><td>面积</td><td>{{ val.get('area_sqm') or '—' }}㎡</td></tr>
+      </tbody>
+    </table>
+    <p class="note">{{ val.get('estimate_note') or '市场价格无法确定，估值仅为粗估，不替代专业评估。' }}</p>
+  {% endif %}
+  {% set cov = coll.get('coverage_vs_interest') or {} %}
+  {% if cov.get('interest_total_cents') %}
+    <table>
+      <tbody>
+        <tr><td style="width:30%">抵押物中性估值</td><td>{{ (cov['collateral_neutral_cents'] / 100 / 10000) | round(4) }} 万元</td></tr>
+        <tr><td>本息合计</td><td>{{ (cov['interest_total_cents'] / 100 / 10000) | round(4) }} 万元</td></tr>
+      </tbody>
+    </table>
+    <p class="note">{{ cov.get('note') or '两数字并列展示供参考。' }}</p>
+  {% endif %}
 {% else %}
   <p class="note">无抵押物信息。</p>
 {% endif %}
 
-<!-- 七、法律文书与法规 -->
-<h2 class="sec">七、法律文书与法规依据</h2>
+<!-- 八、法律文书与法规 -->
+<h2 class="sec">八、法律文书与法规依据</h2>
 {% set legal = sections.get('legal') or {} %}
 <p>{{ legal.get('documents', {}).get('not_found_note') or '未检索到相关法律文书。' }}</p>
 <p class="warn">{{ legal.get('statutes_note') or '' }}</p>
 
-<!-- 八、风控评估 -->
-<h2 class="sec">八、风控评估</h2>
+<!-- 九、司法执行与受偿 -->
+<h2 class="sec">九、司法执行与受偿分析</h2>
+{% set er = sections.get('execution_recovery') or {} %}
+{% if er %}
+  <table>
+    <tbody>
+      <tr><td style="width:30%">司法状态</td><td>{{ er.get('judicial_status') or '⚠️ 需人工核实' }}</td></tr>
+      <tr><td>抵押顺位</td><td>{{ er.get('mortgage_rank') or '⚠️ 需人工核实' }}</td></tr>
+      <tr><td>查封情况</td><td>{{ er.get('seizure') or '⚠️ 需人工核实' }}</td></tr>
+    </tbody>
+  </table>
+  {% if er.get('repayment_priority_note') %}<p class="note">{{ er['repayment_priority_note'] }}</p>{% endif %}
+  {% if er.get('execution_objection_risk') %}
+    <p class="warn">{{ er['execution_objection_risk'].get('risk', '') }}</p>
+    {% if er['execution_objection_risk'].get('law_ref') %}<p class="note">法律依据：{{ er['execution_objection_risk']['law_ref'] }}</p>{% endif %}
+  {% endif %}
+{% endif %}
+
+<!-- 十、风控评估 -->
+<h2 class="sec">十、风控评估</h2>
 {% set risk = sections.get('risk') or {} %}
 <h3>✅ 有利因素</h3>
 <ul>{% for x in risk.get('favorable') or ['⚠️ 需人工核实'] %}<li>{{ x }}</li>{% endfor %}</ul>
@@ -208,10 +267,29 @@
 <h3>📝 需人工核实事项</h3>
 <ul>{% for x in risk.get('need_manual_verify') or ['⚠️ 需人工核实'] %}<li>{{ x }}</li>{% endfor %}</ul>
 
-<!-- 九、处置建议 -->
-<h2 class="sec">九、处置建议与投资决策</h2>
+<!-- 十一、处置方案 -->
+<h2 class="sec">十一、处置方案</h2>
 {% set disposal = sections.get('disposal') or {} %}
-<p>{{ disposal.get('note') or '⚠️ 需人工核实' }}</p>
+{% for p in disposal.get('paths') or [] %}
+  <h3>{{ p.get('name') or '处置路径' }}</h3>
+  <p>{{ p.get('detail') or '—' }}</p>
+  {% if p.get('cycle_estimate') %}<p class="note">⏱ {{ p['cycle_estimate'] }}</p>{% endif %}
+  {% if p.get('risk') %}<p class="warn">⚠️ {{ p['risk'] }}</p>{% endif %}
+{% endfor %}
+{% if disposal.get('note') %}<p class="note">{{ disposal['note'] }}</p>{% endif %}
+
+<!-- 十二、待补充信息 -->
+<h2 class="sec">十二、待补充信息</h2>
+{% set pending = sections.get('pending_supplements') or [] %}
+{% if pending %}
+  <ul>
+  {% for it in pending %}
+    <li>{{ it.field }}：{{ it.reason }}</li>
+  {% endfor %}
+  </ul>
+{% else %}
+  <p class="note">暂无待补充信息。</p>
+{% endif %}
 
 <!-- 免责声明 -->
 <div class="disclaimer">

@@ -6,10 +6,12 @@ from pydantic import BaseModel, Field
 
 class TaskCreate(BaseModel):
     claim_ids: list[int] = Field(min_length=1, max_length=5)
+    source_claim_ids: list[int] | None = None  # 当次导入的全量债权（含未勾选）
 
 
 class TaskOut(BaseModel):
     id: int
+    name: str | None = None
     claim_ids: list[int]
     status: str
     current_node: str | None

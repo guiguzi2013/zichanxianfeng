@@ -35,6 +35,7 @@ backend/uploads/
 # ===== 部署临时物 =====
 deploy/certbot-www/
 deploy/certbot-certs/
+deploy/docker-compose.override.yml
 
 # ===== 日志 =====
 *.log

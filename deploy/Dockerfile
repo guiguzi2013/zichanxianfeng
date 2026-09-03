@@ -5,7 +5,8 @@
 # 部署：cd deploy && docker compose up -d --build
 # 注：国内服务器构建需配置镜像加速（见 deploy/部署与迁移说明.md）
 # ============================================================
-FROM python:3.13-slim
+# 注：python 3.13 会拒绝 rapidocr-onnxruntime==1.4.4(Requires-Python <3.13)，用 3.12
+FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

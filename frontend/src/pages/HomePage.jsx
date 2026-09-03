@@ -378,22 +378,14 @@ export default function HomePage() {
             </div>
           </Col>
 
-          {/* 市场行情：文字展示（纯展示，无更多）*/}
+          {/* AMC 市场分析（2026-09-03 用户指令：删除市场行情/拍卖平台成交，AMC 移至原市场行情位置并自适应宽度）*/}
           <Col xs={24} md={8}>
             <div className="section-card" style={{ height: '100%' }}>
-              <SectionTitle icon={<ThunderboltOutlined style={{ color: '#d48806' }} />} title="市场行情" />
-              <Row gutter={[8, 8]}>
-                {kpiItems.map((k) => (
-                  <Col span={12} key={k.label}>
-                    <div style={{ padding: '12px 8px', background: 'var(--bg-soft, #F7F9FC)', borderRadius: 6, textAlign: 'center' }}>
-                      <div className="kpi-label"><span style={{ color: 'var(--primary)' }}>{k.icon}</span> {k.label}</div>
-                      <div className="kpi-value" style={{ fontSize: 22 }}>{k.value}<span className="kpi-unit">{k.unit}</span></div>
-                      {k.trend && <div className={`kpi-trend ${k.trend_up ? 'up' : 'down'}`}>{k.trend}</div>}
-                    </div>
-                  </Col>
-                ))}
-              </Row>
-              <div style={{ fontSize: 11, color: 'var(--text-weak)', marginTop: 8 }}>在拍总数 / 今日新增 / 近一年成交 / 平均折扣率</div>
+              <SectionTitle icon={<BankOutlined style={{ color: '#722ed1' }} />} title="AMC 市场分析" />
+              <Tabs size="small" items={[
+                { key: 'national', label: '五大国有 AMC 份额', children: renderAmcRank(amcNational) },
+                { key: 'local', label: '地方 AMC 挂牌', children: renderAmcRank(amcLocal) },
+              ]} />
             </div>
           </Col>
 
@@ -417,28 +409,7 @@ export default function HomePage() {
           </Col>
         </Row>
 
-        {/* ===== 拍卖平台 + AMC 市场（移到公告下方）===== */}
-        <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
-          <Col xs={24} md={14}>
-            <div className="section-card" style={{ height: '100%' }}>
-              <SectionTitle icon={<DatabaseOutlined style={{ color: 'var(--primary)' }} />} title="拍卖平台成交" />
-              <Table size="small" columns={auctionColumns} dataSource={auctionData} pagination={false}
-                scroll={{ x: 'max-content' }}
-                locale={{ emptyText: '暂无数据，请在管理后台录入' }} />
-              <div style={{ fontSize: 11, color: 'var(--text-weak)', marginTop: 8 }}>合计上拍 {auctionData.reduce((s, a) => s + a.on_auction, 0).toLocaleString()} ｜ 成交率 68% ｜ 数据来源：各拍卖平台（模拟）</div>
-            </div>
-          </Col>
-          <Col xs={24} md={10}>
-            <div className="section-card" style={{ height: '100%' }}>
-              <SectionTitle icon={<BankOutlined style={{ color: '#722ed1' }} />} title="AMC 市场分析" />
-              <Tabs size="small" items={[
-                { key: 'national', label: '五大国有 AMC 份额', children: renderAmcRank(amcNational) },
-                { key: 'local', label: '地方 AMC 挂牌', children: renderAmcRank(amcLocal) },
-              ]} />
-              <div style={{ fontSize: 11, color: 'var(--text-weak)' }}>国有 AMC 总规模 9700 亿（模拟数据）</div>
-            </div>
-          </Col>
-        </Row>
+        {/* ===== 2026-09-03 用户指令：拍卖平台成交已删除（AMC 已移至上方第一行）===== */}
 
         {/* ===== 精选债权（重点版块，"更多"在右上角）===== */}
         <div className="section-card" style={{ marginBottom: 20 }}>

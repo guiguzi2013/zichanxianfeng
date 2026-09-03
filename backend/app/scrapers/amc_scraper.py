@@ -380,24 +380,33 @@ def _detail_cinda(url: str, fallback_title: str) -> dict:
 
 
 def _detail_gwamcc(url: str, fallback_title: str, fallback_date: str) -> dict:
-    """长城详情：静态页无正文（正文 JS 动态加载，待适配）→ 先落列表信息 + 原文链接"""
+    """长城详情：静态页无正文（正文 JS 动态加载，待适配）→ 先落列表信息 + 原文链接。
+
+    2026-09-03：跨境(香港)访问境内源常超时——短超时 + 重试 1 次，仍失败仅记日志
+    （列表信息已足够，不阻塞同步整体；国内服务器访问正常）。
+    """
     out = {"title": fallback_title, "date": fallback_date, "body": "", "tables": [], "attachments": []}
-    try:
-        import httpx
-        r = httpx.get(url, headers={"User-Agent": UA}, timeout=25, verify=False)
-        t = r.text
-        m = re.search(r'<title>(.*?)</title>', t, re.S)
-        if m and not out["title"]:
-            out["title"] = re.sub(r"<[^>]+>", "", m.group(1)).strip()
-        # 静态页正文区（若有）
-        m = re.search(r'<div[^>]+class="[^"]*article[^"]*"[^>]*>(.*?)</div>', t, re.S)
-        if m:
-            body_txt = re.sub(r"<[^>]+>", " ", m.group(1))
-            body_txt = re.sub(r"\s+", " ", body_txt).strip()
-            if len(body_txt) > 50:
-                out["body"] = body_txt[:30000]
-    except Exception as e:  # noqa: BLE001
-        logger.warning("长城详情抓取失败 %s: %s", url, e)
+    import httpx
+    for attempt in (1, 2):
+        try:
+            r = httpx.get(url, headers={"User-Agent": UA}, timeout=12, verify=False)
+            t = r.text
+            m = re.search(r'<title>(.*?)</title>', t, re.S)
+            if m and not out["title"]:
+                out["title"] = re.sub(r"<[^>]+>", "", m.group(1)).strip()
+            # 静态页正文区（若有）
+            m = re.search(r'<div[^>]+class="[^"]*article[^"]*"[^>]*>(.*?)</div>', t, re.S)
+            if m:
+                body_txt = re.sub(r"<[^>]+>", " ", m.group(1))
+                body_txt = re.sub(r"\s+", " ", body_txt).strip()
+                if len(body_txt) > 50:
+                    out["body"] = body_txt[:30000]
+            return out
+        except Exception as e:  # noqa: BLE001
+            if attempt == 1:
+                logger.warning("长城详情抓取超时(重试) %s: %s", url, str(e)[:80])
+            else:
+                logger.warning("长城详情抓取失败 %s: %s", url, str(e)[:80])
     return out
 
 

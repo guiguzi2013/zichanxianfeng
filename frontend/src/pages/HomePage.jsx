@@ -32,11 +32,12 @@ export default function HomePage() {
   const [keyword, setKeyword] = useState('')
 
   useEffect(() => {
-    // 分栏目请求，避免全部栏目混在一个 100 条里挤掉精选名额
+    // 分栏目请求；2026-09-03：只取页面实际显示条数(15/6/4)，收录计数用接口 total——
+    // 原来每栏目拉 100 条全量 detail(共~380KB) 跨境下精选区块卡顿
     Promise.all([
-      client.get('/feed?section=featured&page_size=100').catch(() => ({ data: { items: [] } })),
-      client.get('/feed?section=bargain&page_size=100').catch(() => ({ data: { items: [] } })),
-      client.get('/feed?section=notice&page_size=100').catch(() => ({ data: { items: [] } })),
+      client.get('/feed?section=featured&page_size=15').catch(() => ({ data: { items: [], total: 0 } })),
+      client.get('/feed?section=bargain&page_size=6').catch(() => ({ data: { items: [], total: 0 } })),
+      client.get('/feed?section=notice&page_size=4').catch(() => ({ data: { items: [], total: 0 } })),
       client.get('/notices').catch(() => ({ data: { notices: [] } })),
       dashboardApi.get().catch(() => ({ data: null })),
     ]).then(([featResp, bargainResp, noticeResp, platNoticeResp, dashResp]) => {
@@ -44,6 +45,11 @@ export default function HomePage() {
         featured: featResp.data?.items || [],
         bargain: bargainResp.data?.items || [],
         notice: noticeResp.data?.items || [],
+        total: {
+          featured: featResp.data?.total ?? (featResp.data?.items || []).length,
+          bargain: bargainResp.data?.total ?? (bargainResp.data?.items || []).length,
+          notice: noticeResp.data?.total ?? (noticeResp.data?.items || []).length,
+        },
       })
       setNotices(platNoticeResp.data?.notices || [])
       setDash(dashResp.data)
@@ -416,7 +422,7 @@ export default function HomePage() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <span className="section-title" style={{ marginBottom: 0 }}>
               精选债权
-              <span style={{ fontSize: 12, color: 'var(--text-weak)', fontWeight: 400, marginLeft: 8 }}>共 {featured.length} 条</span>
+              <span style={{ fontSize: 12, color: 'var(--text-weak)', fontWeight: 400, marginLeft: 8 }}>共 {feed.total?.featured ?? featured.length} 条</span>
             </span>
             <span className="section-more" style={{ fontSize: 13, color: 'var(--primary)', cursor: 'pointer' }} onClick={() => navigate('/debts')}>更多 →</span>
           </div>

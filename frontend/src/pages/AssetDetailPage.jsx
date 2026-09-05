@@ -272,6 +272,7 @@ export default function AssetDetailPage() {
                     if (detail.collateral_type) return detail.collateral_type
                     if (/应收/.test(t)) return '应收债权'
                     if (/股权|出资/.test(t)) return '股权/出资款'
+                    if (/股票|证券代码|流通股/.test(t)) return '上市公司股票'
                     if (/车位|车库/.test(t)) return '车位'
                     if (/房产|房屋|楼|住宅|大厦/.test(t)) return '房产'
                     if (/设备|机器/.test(t)) return '设备'
@@ -286,6 +287,16 @@ export default function AssetDetailPage() {
                 <Descriptions.Item label="处置方">{detail.transferor || '未披露'}</Descriptions.Item>
                 <Descriptions.Item label="拍卖时间">{detail.auction_time || '未披露'}</Descriptions.Item>
                 <Descriptions.Item label="折扣">{detail.discount || detail.discount_rate || '未披露'}</Descriptions.Item>
+                {/* 司法拍卖/股票类标的补充字段（2026-09-06：威领股份等上市公司股权法拍） */}
+                {(detail.stock_code || detail.stock_name || detail.stock_qty || detail.case_no) && (
+                  <Descriptions.Item label="拍卖详情" span={2}>
+                    {detail.stock_name && <div>股票：{detail.stock_name}{detail.stock_code ? `（${detail.stock_code}）` : ''}</div>}
+                    {detail.stock_qty && <div>股数：{detail.stock_qty}{detail.stock_pkg ? `（${detail.stock_pkg}）` : ''}</div>}
+                    {detail.case_no && <div>案号：{detail.case_no}</div>}
+                    {detail.deposit && <div>保证金：{detail.deposit}</div>}
+                    {detail.bid_increment && <div>加价幅度：{detail.bid_increment}</div>}
+                  </Descriptions.Item>
+                )}
                 <Descriptions.Item label="标的描述" span={2}>
                   {detail.collateral_desc || detail.short_title || '未披露'}
                 </Descriptions.Item>
@@ -392,15 +403,99 @@ export default function AssetDetailPage() {
               <div style={{ marginTop: 8, marginBottom: 8 }}>
                 {(() => {
                   const at = detail.announce_table
-                  const headers = at.headers || []
-                  const rows = at.rows || []
-                  // 键值表判定：表头非空列 ≤1 且存在"键→值"行（首列是键、次列是值）
-                  const nonEmptyHeaders = headers.filter((h) => h && String(h).trim())
-                  const isKv = nonEmptyHeaders.length <= 1 && rows.some((r) => {
-                    const k = String(r[0] || '').trim()
-                    const v = String(r[1] || '').trim()
+                  let headers = (at.headers || []).map((h) => (h == null ? '' : String(h).trim()))
+                  const rows = (at.rows || []).map((r) => (r || []).map((c) => (c == null ? '' : String(c).trim())))
+                  const filled = (arr) => arr.filter((c) => c !== '')
+                  // 形态修正 ①：headers 几乎全空/是提示行(如"基准日…单位：元")，rows 首行才是真表头
+                  // （688 神木正鼎：headers 只有末格"基准日…"，rows[0] 是 11 列真表头）
+                  if (filled(headers).length <= 1 && rows.length > 0 && filled(rows[0]).length > filled(headers).length) {
+                    headers = rows[0]
+                    rows.shift()
+                  }
+                  const nonEmptyHeaders = filled(headers)
+                  // 统计复合表判定（743 丰田融资租赁）：表头≤1列 但 rows 是"多个统计子表"
+                  // ——子表头行形如 [节名, 笔数（笔）, 占比, 备注]，数据行次列起是数字/百分比。
+                  // 特征：存在"次列起全为数字/百分比/空"的宽行（数据行），且存在文字列名的宽行（子表头行）。
+                  const restNumeric = (r) => {
+                    const rest = r.slice(1)
+                    const rf = filled(rest)
+                    return rf.length >= 2 && rf.every((c) => /^[\d,.\s%()（）元万元]+$/.test(c))
+                  }
+                  const isStatComposite = nonEmptyHeaders.length <= 1 && rows.some(restNumeric) &&
+                    rows.some((r) => !restNumeric(r) && filled(r).length >= 3)
+                  // 纯键值表判定：表头非空列 ≤1 且存在"键→值"行（首列是键、次列是值），且非统计复合表
+                  const isKv = !isStatComposite && nonEmptyHeaders.length <= 1 && rows.some((r) => {
+                    const k = r[0] || ''
+                    const v = r[1] || ''
                     return k && v && !/^[\d,\.]+(元|万|万元|亿|亿元)?$/.test(k)
                   })
+
+                  // ===== 统计复合表：按子表头行切分为多个小表（743 丰田融资租赁）=====
+                  if (isStatComposite) {
+                    const groups = []
+                    let cur = null
+                    for (const r of rows) {
+                      const f = filled(r)
+                      if (f.length === 1) {
+                        // 单格行：纯节标题（如"债务人信息"）→ 独立小节标题
+                        groups.push({ kind: 'title', text: r[0] })
+                        cur = null
+                        continue
+                      }
+                      if (!restNumeric(r) && f.length >= 2) {
+                        // 子表头行：[节名, 列2名, 列3名, ...] → 新子表
+                        cur = { title: r[0], headers: r.slice(1), rows: [] }
+                        groups.push({ kind: 'table', ...cur })
+                        continue
+                      }
+                      if (cur && restNumeric(r)) {
+                        // 数据行：首列分类 + 数字列 → 归当前子表
+                        cur.rows.push(r)
+                      }
+                    }
+                    return (
+                      <div>
+                        {groups.map((g, gi) => {
+                          if (g.kind === 'title') {
+                            return <div key={gi} style={{ fontWeight: 600, fontSize: 13, color: '#595959', margin: '10px 0 4px' }}>{g.text}</div>
+                          }
+                          if (!g.headers.length) return null
+                          return (
+                            <div key={gi} style={{ marginBottom: 10 }}>
+                              {g.title && <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-main)', marginBottom: 4 }}>{g.title}</div>}
+                              <Table
+                                size="small"
+                                bordered
+                                pagination={false}
+                                rowKey={(_, i) => i}
+                                style={{ marginTop: 2 }}
+                                columns={[{
+                                  title: g.title || g.headers[0] || '分类',
+                                  dataIndex: 'c0',
+                                  key: 'c0',
+                                  width: 150,
+                                  render: (v) => <span style={{ fontSize: 12 }}>{v || ''}</span>,
+                                }, ...g.headers.map((h, i) => ({
+                                  title: h || `列${i + 1}`,
+                                  dataIndex: `c${i + 1}`,
+                                  key: `c${i + 1}`,
+                                  width: /占比|比例/.test(h) ? 90 : 110,
+                                  align: 'right',
+                                  render: (v) => <span style={{ fontSize: 12 }}>{v || ''}</span>,
+                                }))]}
+                                dataSource={g.rows.map((r) => {
+                                  const obj = { c0: r[0] || '' }
+                                  g.headers.forEach((_, i) => { obj[`c${i + 1}`] = r[i + 1] || '' })
+                                  return obj
+                                })}
+                              />
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  }
+                  // ===== 横表：AntD Table =====
                   if (!isKv) {
                     return (
                       <Table
@@ -424,7 +519,7 @@ export default function AssetDetailPage() {
                       />
                     )
                   }
-                  // 键值表渲染：2列行[键,值] / 3列行[组名,键,值] / 长文本段落
+                  // ===== 键值表渲染：2列行[键,值] / 3列行[组名,键,值] / 长文本段落 =====
                   return (
                     <div style={{ border: '1px solid #f0f0f0', borderRadius: 6 }}>
                       {rows.map((r, i) => {

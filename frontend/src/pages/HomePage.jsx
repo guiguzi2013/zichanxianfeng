@@ -266,16 +266,18 @@ export default function HomePage() {
   // 热门捡漏卡片（内容参考"恒大债权包"模板；挂牌价突出吸引眼球；本金/折扣在右上角省行）
   const renderBargainCard = (item) => {
     const d = item.detail || {}
-    // 2026-09-02：应收账款类债权右上角写"应收账款"而非"本金"
+    // 2026-09-02：应收账款类债权右上角写"应收账款"而非"本金"；2026-09-06：股票/股权类显示股数
     const isReceivable = /应收/.test(`${item.title || ''} ${item.summary || ''} ${d.collateral_desc || ''}`)
-    const amountLabel = isReceivable ? '应收账款' : '本金'
+    const isStock = /股票|证券代码|流通股/.test(`${item.title || ''} ${d.short_title || ''}`)
+    const amountLabel = isStock ? '股数' : (isReceivable ? '应收账款' : '本金')
+    const amountVal = isStock ? (d.stock_qty || '') : d.claim_total
     return (
       <Col xs={24} md={12} key={item.id}>
         <div className="kpi-card" style={{ cursor: 'pointer', height: '100%', display: 'flex', flexDirection: 'column', gap: 6, position: 'relative' }}
           onClick={() => navigate(`/asset/${item.id}`)}>
-          {/* 本金/应收账款/折扣：右上角（红色小字，一行）*/}
+          {/* 本金/应收账款/股数/折扣：右上角（红色小字，一行）*/}
           <div style={{ position: 'absolute', top: 14, right: 14, textAlign: 'right', zIndex: 1 }}>
-            <span style={{ fontSize: 12, color: 'var(--danger)' }}>{amountLabel} <Text strong style={{ fontSize: 12 }}>{d.claim_total}</Text></span>
+            {amountVal && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{amountLabel} <Text strong style={{ fontSize: 12 }}>{amountVal}</Text></span>}
             {d.discount && <span style={{ fontSize: 12, color: 'var(--danger)', marginLeft: 8 }}>折扣 <Text strong style={{ fontSize: 12 }}>{d.discount}</Text></span>}
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', paddingRight: 90 }}>

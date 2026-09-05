@@ -31,6 +31,11 @@ COPY backend /app/backend
 # 前端构建产物（本地已 npm run build）
 COPY frontend/dist /app/frontend/dist
 
+# 4) 项目字体目录 font/（fzxbs.ttf/msyh.ttc/msyhbd.ttc/simsun.ttc，英文名）
+#    COPY 到卷外 /app/font：docker-compose 的命名卷 zxf-data 挂载 /app/backend/data，
+#    旧卷会掩盖镜像内 data 下新增文件；字体放卷外路径，pdf_generator._proj() 优先取它
+COPY font /app/font
+
 WORKDIR /app/backend
 EXPOSE 8000
 

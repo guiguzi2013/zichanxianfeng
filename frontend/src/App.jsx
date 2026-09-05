@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { Layout } from 'antd'
 import AppHeader from './components/AppHeader'
 import AppFooter from './components/AppFooter'
@@ -21,8 +21,9 @@ import KnowledgePage from './pages/KnowledgePage'
 import ValuationPage from './pages/ValuationPage'
 import TaskClaimsPage from './pages/TaskClaimsPage'
 import AdminLandPricePage from './pages/AdminLandPricePage'
-import QccDemoPage from './pages/QccDemoPage'
 import PropertyCluesPage from './pages/PropertyCluesPage'
+import DebtorProfilePage from './pages/DebtorProfilePage'
+import DebtorReportPage from './pages/DebtorReportPage'
 import DebtListPage from './pages/DebtListPage'
 import NoticeListPage from './pages/NoticeListPage'
 import SearchPage from './pages/SearchPage'
@@ -31,10 +32,14 @@ import { useAuthStore } from './store/auth'
 const { Content } = Layout
 
 // 登录守卫：普通用户访问前台用户功能；员工（editor/admin）无用户功能，重定向管理后台
+// 2026-09-05：未登录跳 /login 时携带来源路径 state.from，登录成功后回原页
 function RequireAuth({ children }) {
   const token = useAuthStore((s) => s.token)
   const user = useAuthStore((s) => s.user)
-  if (!token) return <Navigate to="/login" replace />
+  const location = useLocation()
+  if (!token) {
+    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />
+  }
   if (user?.role === 'editor' || user?.role === 'admin') return <Navigate to="/admin" replace />
   return children
 }
@@ -43,7 +48,10 @@ function RequireAuth({ children }) {
 function RequireBackend({ children }) {
   const token = useAuthStore((s) => s.token)
   const user = useAuthStore((s) => s.user)
-  if (!token) return <Navigate to="/admin-login" replace />
+  const location = useLocation()
+  if (!token) {
+    return <Navigate to="/admin-login" replace state={{ from: location.pathname + location.search }} />
+  }
   if (user?.role !== 'admin' && user?.role !== 'editor') return <Navigate to="/" replace />
   return children
 }
@@ -52,7 +60,10 @@ function RequireBackend({ children }) {
 function RequireAdmin({ children }) {
   const token = useAuthStore((s) => s.token)
   const user = useAuthStore((s) => s.user)
-  if (!token) return <Navigate to="/admin-login" replace />
+  const location = useLocation()
+  if (!token) {
+    return <Navigate to="/admin-login" replace state={{ from: location.pathname + location.search }} />
+  }
   if (user?.role !== 'admin') return <Navigate to="/admin" replace />
   return children
 }
@@ -61,7 +72,10 @@ function RequireAdmin({ children }) {
 function RequireReportView({ children }) {
   const token = useAuthStore((s) => s.token)
   const user = useAuthStore((s) => s.user)
-  if (!token) return <Navigate to="/login" replace />
+  const location = useLocation()
+  if (!token) {
+    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />
+  }
   if (user?.role === 'admin' || user?.role === 'editor') return children
   return children
 }
@@ -86,14 +100,13 @@ export default function App() {
             <Route path="/asset/:id" element={<AssetDetailPage />} />
             <Route path="/admin/feed" element={<RequireBackend><AdminFeedPage /></RequireBackend>} />
             <Route path="/valuation" element={<ValuationPage mode="industrial" />} />
-            <Route path="/valuation/commercial" element={<ValuationPage mode="commercial" />} />
             <Route path="/task/:taskId/edit" element={<RequireAuth><TaskClaimsPage /></RequireAuth>} />
             <Route path="/property-clues" element={<PropertyCluesPage />} />
+            <Route path="/debtor-profile" element={<DebtorProfilePage />} />
+            <Route path="/debtor-report/:id" element={<DebtorReportPage />} />
             <Route path="/debts" element={<DebtListPage />} />
             <Route path="/notices" element={<NoticeListPage />} />
             <Route path="/search" element={<SearchPage />} />
-            <Route path="/demo/biz" element={<QccDemoPage />} />
-            <Route path="/demo/risk" element={<QccDemoPage />} />
             <Route path="/admin" element={<RequireBackend><AdminDashboard /></RequireBackend>} />
             <Route path="/admin/data" element={<RequireBackend><AdminDataPage /></RequireBackend>} />
             <Route path="/admin/knowledge" element={<RequireAdmin><KnowledgePage /></RequireAdmin>} />

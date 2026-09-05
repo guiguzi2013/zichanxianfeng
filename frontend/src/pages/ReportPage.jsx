@@ -102,10 +102,14 @@ function ClaimBasicCard({ data }) {
   return (
     <>
       <KV label="债务人名称" value={bt.debtor_name} />
+      <KV label="债权人" value={bt.creditor || bt.loan_bank} />
+      {bt.debt_type && <KV label="债权类型" value={bt.debt_type} />}
       <KV label="债权本金" value={fmt(bt.principal_cents)} strong />
       <KV label="利息/罚息" value={fmt(bt.interest_cents)} />
+      {bt.interest_method && <KV label="利息计算方式" value={bt.interest_method} />}
       <KV label="担保类型" value={bt.guaranty_type} />
       <KV label="司法状态" value={bt.judicial_status} />
+      {bt.judgment_result && <KV label="是否胜诉" value={bt.judgment_result} />}
       {/* 本息校验（利息异常告警）*/}
       {val.interest_suspicious && <Alert type="warning" showIcon style={{ marginTop: 8 }} message={val.interest_suspicious} />}
       {idetail.mode && idetail.mode !== 'none' && (
@@ -187,6 +191,16 @@ function DebtorCard({ data }) {
               </Tag>
             ))}
           </Space>
+          {factors.filter((f) => f.sample).length > 0 && (
+            <div style={{ marginTop: 6, fontSize: 12, color: '#666', lineHeight: 1.7 }}>
+              {factors.filter((f) => f.sample).map((f) => (
+                <div key={`s-${f.label}`}>
+                  <Text type="secondary">示例（{f.label}）：</Text>
+                  <Text>{f.sample}</Text>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
       <KV label="司法风险" value={cleanNote(jr.note)} />

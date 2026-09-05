@@ -143,10 +143,10 @@ def sync_jd_credit(operator: User = Depends(require_editor)):
 
 @router.post("/admin/feed/sync-taobao", response_model=ApiResponse)
 def sync_taobao_credit(operator: User = Depends(require_editor)):
-    """手动触发阿里资产债权公告 + 破产专区捡漏抓取 → 精选债权/捡漏（editor 及以上）"""
-    from ..scrapers.taobao_credit import sync_taobao_credit_to_feed
-    result = sync_taobao_credit_to_feed()
-    return ok(result, f"同步完成：精选新增 {result.get('fetched_featured', 0)} 条，捡漏新增 {result.get('fetched_bargain', 0)} 条")
+    """阿里资产抓取已停用（2026-09-05 用户拍板：阿里精选整类删除，阿里详情仅列表级一句话内容，
+    登录后仍无正文——宁缺毋滥；保留接口返回空统计，避免旧前端/脚本报错）"""
+    return ok({"fetched_featured": 0, "fetched_bargain": 0, "dropped_incomplete": 0,
+               "featured_total": 0, "bargain_total": 0}, "阿里资产数据源已停用")
 
 
 @router.post("/admin/feed/sync-amc", response_model=ApiResponse)
@@ -161,19 +161,17 @@ def sync_amc_notices(operator: User = Depends(require_editor)):
 
 @router.post("/admin/feed/sync-all", response_model=ApiResponse)
 def sync_all_credit(operator: User = Depends(require_editor)):
-    """一键同步京东 + 阿里资产债权信息（精选 + 破产捡漏）→ 首页栏目（editor 及以上）"""
+    """一键同步京东债权信息（精选 + 捡漏）→ 首页栏目（editor 及以上）。
+    2026-09-05：阿里资产已整类停用（详情仅列表级一句话内容），不再并入 sync-all"""
     from ..scrapers.jd_credit import sync_jd_credit_to_feed
-    from ..scrapers.taobao_credit import sync_taobao_credit_to_feed
     r1 = sync_jd_credit_to_feed()
-    r2 = sync_taobao_credit_to_feed()
-    feat = r1.get("fetched_featured", 0) + r2.get("fetched_featured", 0)
-    bg = r1.get("fetched_bargain", 0) + r2.get("fetched_bargain", 0)
+    feat = r1.get("fetched_featured", 0)
+    bg = r1.get("fetched_bargain", 0)
     return ok(
-        {"jd": r1, "taobao": r2, "fetched_featured": feat, "fetched_bargain": bg,
-         "featured_total": r2.get("featured_total", r1.get("featured_total", 0)),
-         "bargain_total": r2.get("bargain_total", r1.get("bargain_total", 0))},
-        f"同步完成：精选债权新增 {feat} 条（京东 {r1.get('fetched_featured', 0)} + 阿里 {r2.get('fetched_featured', 0)}），"
-        f"捡漏新增 {bg} 条（京东 {r1.get('fetched_bargain', 0)} + 阿里 {r2.get('fetched_bargain', 0)}）",
+        {"jd": r1, "fetched_featured": feat, "fetched_bargain": bg,
+         "featured_total": r1.get("featured_total", 0),
+         "bargain_total": r1.get("bargain_total", 0)},
+        f"同步完成：精选债权新增 {feat} 条，捡漏新增 {bg} 条",
     )
 
 

@@ -21,6 +21,7 @@ from .knowledge import LegalDoc, KnowledgeCase
 from .activity_record import ActivityRecord
 from .land_price_ref import LandPriceRef
 from .clue_report import ClueReport
+from .qcc_profile import QccProfile
 
 __all__ = [
     "User",
@@ -46,4 +47,5 @@ __all__ = [
     "ActivityRecord",
     "LandPriceRef",
     "ClueReport",
+    "QccProfile",
 ]

@@ -1,6 +1,6 @@
 import { Card, Form, Input, Button, Typography, message } from 'antd'
 import { UserOutlined, LockOutlined } from '@ant-design/icons'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, useLocation, Link } from 'react-router-dom'
 import { authApi } from '../api'
 import { useAuthStore } from '../store/auth'
 
@@ -8,6 +8,7 @@ const { Title, Text } = Typography
 
 export default function LoginPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const setAuth = useAuthStore((s) => s.setAuth)
 
   const onFinish = async (values) => {
@@ -15,7 +16,14 @@ export default function LoginPage() {
       const resp = await authApi.login(values)
       setAuth(resp.data.access_token, resp.data.user)
       message.success('登录成功')
-      navigate('/')
+      // 2026-09-05：登录后回到被拦截前的页面（state.from），而不是跳首页
+      const role = resp.data.user?.role
+      const from = location.state?.from
+      if (role === 'admin' || role === 'editor') {
+        navigate(from && from.startsWith('/admin') ? from : '/admin', { replace: true })
+      } else {
+        navigate(from && from.startsWith('/') ? from : '/', { replace: true })
+      }
     } catch {
       /* 拦截器已提示 */
     }

@@ -88,23 +88,39 @@ def detect_duplicates(db: Session, user_id: int, incoming: list[dict]) -> dict:
                 if _names_match(c.get("debtor_name"), h.debtor_name):
                     first = h
                     break
+            src = _locate_claim_source(db, first) if first else "历史记录"
             existing_dups.append({
                 "id": c.get("id"),
                 "debtor_name": c.get("debtor_name"),
-                "first_source": _locate_claim_source(db, first) if first else "历史记录",
+                "first_source": src,
+                # 是否已真正发起过尽调（有任务/报告）——仅这类才拦截；只导入未尽调只是提示
+                "started": bool(first and _claim_has_task_or_report(db, first)),
             })
         elif c.get("id") not in incoming_ids:
             # 纯文本粘贴（尚未入库）情况：与历史比较
             for h in history:
                 if _names_match(c.get("debtor_name"), h.debtor_name):
+                    src = _locate_claim_source(db, h)
                     existing_dups.append({
                         "id": c.get("id"),
                         "debtor_name": c.get("debtor_name"),
-                        "first_source": _locate_claim_source(db, h),
+                        "first_source": src,
+                        "started": bool(_claim_has_task_or_report(db, h)),
                     })
                     break
 
     return {"batch_dups": batch_dups, "existing_dups": existing_dups}
+
+
+def _claim_has_task_or_report(db: Session, claim: Claim) -> bool:
+    """该历史债权是否已发起过尽调（进入过任务或生成过报告）"""
+    from ..models import Report, Task
+
+    t = db.scalar(select(Task).where(Task.claim_ids.contains(f'"{claim.id}"')))
+    if t:
+        return True
+    r = db.scalar(select(Report).where(Report.claim_id == claim.id))
+    return r is not None
 
 
 def _locate_claim_source(db: Session, claim: Claim) -> str:

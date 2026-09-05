@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 
 class ClaimCreate(BaseModel):
-    source_type: str = Field(pattern="^(text|link|excel)$")
+    source_type: str = Field(pattern="^(text|doc|excel)$")
     source_raw: str | None = None
     source_url: str | None = None
     debtor_name: str | None = None
@@ -59,10 +59,6 @@ class ClaimOut(BaseModel):
 
 class ImportTextRequest(BaseModel):
     text: str = Field(min_length=10)
-
-
-class ImportLinkRequest(BaseModel):
-    url: str = Field(min_length=8)
 
 
 class ImportExcelResponse(BaseModel):

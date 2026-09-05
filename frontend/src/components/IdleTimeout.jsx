@@ -22,7 +22,8 @@ export default function IdleTimeout() {
       timerRef.current = setTimeout(() => {
         useAuthStore.getState().logout()
         message.warning('长时间未操作，已自动退出登录，请重新登录')
-        navigate('/login', { replace: true })
+        // 2026-09-05：登录后回到超时前所在页面
+        navigate('/login', { replace: true, state: { from: window.location.pathname + window.location.search } })
       }, IDLE_TIMEOUT_MS)
     }
 

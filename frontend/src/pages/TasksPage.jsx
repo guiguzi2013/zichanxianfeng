@@ -92,11 +92,12 @@ export default function TasksPage() {
   ]
 
   const doneTasks = tasks.filter((t) => t.status === 'done' || t.status === 'partial')
-  // 报告级列表：每份报告一行（按债务人），点哪行看哪份
+  // 报告级列表：每份报告一行（含债务人画像/企业速览 2026-09-04），点哪行看哪份
   const reportColumns = [
-    { title: '报告ID', dataIndex: 'report_id', width: 80 },
+    { title: '报告ID', dataIndex: 'report_id', width: 80, render: (v, r) => (r.type === 'profile' ? '—' : v) },
+    { title: '类型', dataIndex: 'type', width: 100, render: (v) => v === 'profile' ? <Tag color="blue">企业速览</Tag> : <Tag color="green">债权尽调</Tag> },
     {
-      title: '债务人', dataIndex: 'debtor_name', ellipsis: true,
+      title: '债务人/企业', dataIndex: 'debtor_name', ellipsis: true,
       render: (v) => <Text strong>{v ? String(v).split('；')[0] : '—'}</Text>,
     },
     { title: '版本', dataIndex: 'version', width: 70, render: (v) => `v${v || 1}` },
@@ -108,7 +109,9 @@ export default function TasksPage() {
     {
       title: '操作', width: 110,
       render: (_, record) => (
-        <Button type="link" onClick={() => navigate(`/report/${record.task_id}/${record.report_id}`)}>查看报告</Button>
+        record.type === 'profile'
+          ? <Button type="link" onClick={() => navigate(`/debtor-report/${record.profile_id}`)}>查看报告</Button>
+          : <Button type="link" onClick={() => navigate(`/report/${record.task_id}/${record.report_id}`)}>查看报告</Button>
       ),
     },
   ]
@@ -125,7 +128,7 @@ export default function TasksPage() {
       message.success('密码已修改，请重新登录')
       setPwdModal(false)
       useAuthStore.getState().logout()
-      navigate('/login')
+      navigate('/login', { state: { from: window.location.pathname } })
     } catch { /* 拦截器已提示 */ }
   }
 
@@ -192,7 +195,7 @@ export default function TasksPage() {
                 <Card title={<span><Tag color="orange">土地厂房估价</Tag> 估价报告（{valuations.length}）</span>}>
                   {valuations.length
                     ? <Table rowKey="id" columns={activityColumns} dataSource={valuations} pagination={{ pageSize: 10 }} />
-                    : <Text type="secondary">暂无估价报告（后期将支持生成土地厂房/商业房产估价报告）</Text>}
+                    : <Text type="secondary">暂无估价记录（土地厂房估价可单独使用）</Text>}
                 </Card>
               </>
             ),

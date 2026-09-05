@@ -1,5 +1,7 @@
-"""债权路由：三种输入通道 + CRUD"""
+"""债权路由：输入通道（文本/Excel/材料文档）+ CRUD"""
 import json
+import os
+import re
 
 from fastapi import APIRouter, Depends, File, UploadFile, status
 from pydantic import BaseModel
@@ -8,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import Claim, User
-from ..schemas.claim import ClaimOut, ClaimUpdate, ImportLinkRequest, ImportTextRequest
+from ..schemas.claim import ClaimOut, ClaimUpdate, ImportTextRequest
 from ..schemas.common import ApiResponse, err, ok
 from ..services.excel_parser import parse_excel
 from ..services.extractor import evaluate_completeness, extract_from_excel_row, extract_from_text
@@ -113,41 +115,202 @@ async def import_text(req: ImportTextRequest, user: User = Depends(get_current_u
     })
 
 
-@router.post("/import-link", response_model=ApiResponse)
-async def import_link(req: ImportLinkRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    from ..scrapers.registry import fetch_url_text
-    from ..services.extractor import extract_from_text
+# ---------- 材料识别任务（2026-09-05：改任务制，避免大文件/OCR 长等待时前端无反馈） ----------
+# POST /claims/import-doc 立即返回 job_id；前端轮询 GET /claims/import-doc/{job_id}/status。
+# 多文件文本提取并行（asyncio.to_thread），OCR/PDF 解析不再串行阻塞。
+import asyncio as _asyncio
+import uuid as _uuid
+import time as _time
 
-    result = await fetch_url_text(req.url)
-    if not result.success:
-        raise err(result.note)
-    try:
-        fields = await extract_from_text(result.text)
-    except LLMError as e:
-        raise err(f"页面已抓取但提取失败：{e}")
-    # 批量去重（同名只保留第一条）
-    from ..services.duplicate_check import _norm_name
-    seen: set[str] = set()
-    dedup_fields = []
-    for f in fields:
-        key = _norm_name(f.get("debtor_name"))
-        if key and key in seen:
-            continue
-        if key:
-            seen.add(key)
-        dedup_fields.append(f)
-    claims = _save_claims(db, user, dedup_fields, "link", result.text[:2000])
+DOC_JOBS: dict[str, dict] = {}  # job_id -> {status, progress, label, result?, error?, created_at}
+_JOB_LOCKS: dict[str, object] = {}  # job_id -> threading.Lock（不进 DOC_JOBS，防序列化报错）
+
+
+def _doc_job_cleanup() -> None:
+    """清理超过 30 分钟的旧任务记录（防内存膨胀）"""
+    now = _time.time()
+    stale = [k for k, v in DOC_JOBS.items() if now - v.get("created_at", 0) > 1800]
+    for k in stale:
+        DOC_JOBS.pop(k, None)
+        _JOB_LOCKS.pop(k, None)
+
+
+async def _run_doc_job(job_id: str, user_id: int, paths: list[tuple[str, str, str]]) -> None:
+    """后台执行：逐文件提取文本（并行）→ 合并 → LLM 识别 → 落库。paths: (safe_name, ext, abs_path)
+    进度反馈：file_states = [{name, status, percent}]，供前端逐文件进度条。
+    2026-09-05：锁用模块级 _JOB_LOCKS 管理，不存进 DOC_JOBS（避免 status 端点序列化 Lock 报 500）。"""
+    from ..services.supplement_parser import extract_text_from_file
+    from ..services.duplicate_check import _norm_name, detect_duplicates
     from ..services.input_quality import analyze_claims, analyze_text
 
-    warnings = analyze_text(result.text) + analyze_claims(dedup_fields)
-    from ..services.duplicate_check import detect_duplicates
-    dup = detect_duplicates(db, user.id, [_claim_to_out(c).model_dump() for c in claims])
-    return ok({
-        "claims": [_claim_to_out(c).model_dump() for c in claims],
-        "scrape_note": result.note,
-        "input_warnings": warnings,
-        "dedup": {"removed": len(fields) - len(dedup_fields), **dup},
-    })
+    import threading
+    lock = threading.Lock()
+    _JOB_LOCKS[job_id] = lock
+
+    total = len(paths)
+    file_parts: list[str] = []
+    names: list[str] = []
+    # 进度状态存 DOC_JOBS 内，配合模块级锁原位更新（多线程不再互相覆盖）
+    DOC_JOBS[job_id] = {**DOC_JOBS[job_id],
+                        "file_states": [{"name": p[0], "status": "未开始", "percent": 0} for p in paths]}
+
+    def _set_file(i: int, **kw) -> None:
+        with lock:
+            DOC_JOBS[job_id]["file_states"][i] = {**DOC_JOBS[job_id]["file_states"][i], **kw}
+
+    try:
+        # 1) 并行提取全文（OCR/PDF 解析放线程池）；每份通过进度回调更新 percent（前端逐文件进度条）
+        def _one(i):
+            safe, ext, p = paths[i]
+            _set_file(i, status="读取中", percent=5)
+
+            def _cb(pct: int, _phase: str = "") -> None:
+                _set_file(i, status="读取中", percent=min(pct, 99))
+
+            try:
+                text = extract_text_from_file(p, ext, progress=_cb)
+            except Exception:
+                text = None
+            ok = bool(text and len(text.strip()) >= 3)
+            _set_file(i, status="已完成" if ok else "无有效内容", percent=100)
+            if ok:
+                file_parts.append(text)
+                names.append(paths[i][0])
+            with lock:
+                st = DOC_JOBS[job_id]["file_states"]
+                done = sum(1 for s in st if s["status"] in ("已完成", "无有效内容"))
+            DOC_JOBS[job_id]["progress"] = round(10 + 55 * done / total)
+            DOC_JOBS[job_id]["label"] = f"正在读取材料（{done}/{total} 份已完成）"
+
+        await _asyncio.gather(*(_asyncio.to_thread(_one, i) for i in range(total)))
+        if not file_parts:
+            DOC_JOBS[job_id]["status"] = "error"
+            DOC_JOBS[job_id]["error"] = "未能从文件中提取到文本（图片可能过糊/倾斜，或为扫描件 PDF，建议用清晰图片/文字版 PDF 重试）"
+            return
+
+        # 2) 合并 + LLM 综合识别（含 债权记录/抵押物清单归属/无关文件分类）
+        combined = "\n".join(
+            f"===== 材料{i + 1}/{len(file_parts)}：{names[i]} =====\n{file_parts[i]}"
+            for i in range(len(file_parts))
+        )
+        DOC_JOBS[job_id] = {**DOC_JOBS[job_id], "progress": 72, "label": "AI 正在分析材料（债权要素/抵押物归属/无关文件）…"}
+        try:
+            from ..services.extractor import extract_doc_material as _extract_doc_material
+
+            doc_result = await _extract_doc_material(combined)
+            fields = doc_result["claims"]
+            ignored_files = doc_result.get("ignored_files") or []
+            file_classes = doc_result.get("file_classes") or []
+        except LLMError as e:
+            DOC_JOBS[job_id]["status"] = "error"
+            DOC_JOBS[job_id]["error"] = f"材料已读取但识别失败：{e}"
+            return
+
+        # 3) 去重 + 落库
+        seen: set[str] = set()
+        dedup_fields = []
+        for f in fields:
+            key = _norm_name(f.get("debtor_name"))
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            dedup_fields.append(f)
+        if not dedup_fields:
+            DOC_JOBS[job_id]["status"] = "error"
+            DOC_JOBS[job_id]["error"] = "未能从材料中识别出有效的债务人/本金/抵押物信息"
+            return
+
+        DOC_JOBS[job_id] = {**DOC_JOBS[job_id], "progress": 90, "label": "正在生成债权记录…"}
+        from ..database import SessionLocal
+        db = SessionLocal()
+        try:
+            user = db.get(User, user_id)
+            claims = _save_claims(db, user, dedup_fields, "doc", f"{'；'.join(names)}\n{combined[:2000]}")
+            for c in claims:
+                c.source_raw = "；".join(names)
+            db.commit()
+            warnings = analyze_text(combined) + analyze_claims(dedup_fields)
+            dup = detect_duplicates(db, user_id, [_claim_to_out(c).model_dump() for c in claims])
+        finally:
+            db.close()
+
+        DOC_JOBS[job_id] = {
+            **DOC_JOBS[job_id], "status": "done", "progress": 100, "label": "识别完成",
+            "result": {
+                "claims": [_claim_to_out(c).model_dump() for c in claims],
+                "file_names": names,
+                "ignored_files": ignored_files,  # 与本债权无关的文件（前端提示，可让用户说明关联性）
+                "file_classes": file_classes,    # 每份文件重要等级 1/2/3 + 类型（上传页展示核对）
+                "input_warnings": warnings,
+                "dedup": {"removed": len(fields) - len(dedup_fields), **dup},
+                "char_count": len(combined),
+                "is_single": len(dedup_fields) == 1,
+            },
+        }
+    except Exception as e:  # noqa: BLE001
+        import logging as _logging
+        _logging.getLogger(__name__).exception("doc job %s failed", job_id)
+        DOC_JOBS[job_id] = {**DOC_JOBS[job_id], "status": "error", "error": f"识别过程出错：{e}"}
+
+
+@router.post("/import-doc", response_model=ApiResponse)
+async def import_doc(files: list[UploadFile] = File(...), user: User = Depends(get_current_user)):
+    """上传材料（Word/PDF/Excel/图片，可多份）→ 立即返回任务号，后台提取+识别（前端轮询进度）。
+
+    2026-09-04 用户确认：①不留原件；②识别 债务人/债权人/本息/利息计算方式/是否胜诉/抵押物；
+    ③一份债权可多份材料合并；④按内容识别拆分（单份=一条、清单=多条）；⑤图片走 OCR。
+    2026-09-05 改任务制：大文件/扫描件识别可达分钟级，同步等待会让用户误判"没点成功/死机"。
+    2026-09-05 用户补充：Excel 不一定=债权列表（可能是抵押物清单/无关表），全部文件统一按内容
+    识别——债权清单拆多条、抵押物清单并入对应债权、无关文件列入 ignored_files 由用户确认。
+    """
+    from ..config import get_settings as _gs
+
+    ALLOWED = {".docx", ".doc", ".pdf", ".txt", ".md", ".jpg", ".jpeg", ".png", ".webp", ".bmp",
+               ".xlsx", ".xls", ".csv"}
+    if not files:
+        raise err("请选择文件")
+    if len(files) > 20:
+        raise err("一次最多上传 20 份材料")
+
+    _settings = _gs()
+    os.makedirs(_settings.upload_dir, exist_ok=True)
+
+    paths: list[tuple[str, str, str]] = []
+    for idx, file in enumerate(files):
+        filename = file.filename or f"材料{idx + 1}"
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in ALLOWED:
+            raise err(f"不支持的文件格式 {ext or '(无扩展名)'}：{filename}，支持 Word/PDF/Excel/图片(jpg/png)")
+        content = await file.read()
+        if not content:
+            continue
+        if len(content) > 20 * 1024 * 1024:
+            raise err(f"文件过大（超过 20MB）：{filename}")
+        safe = re.sub(r"[^\w.\-\u4e00-\u9fff]", "_", filename)
+        path = os.path.join(_settings.upload_dir, f"claimdoc_{_uuid.uuid4().hex[:8]}_{safe}")
+        with open(path, "wb") as fp:
+            fp.write(content)
+        paths.append((safe, ext.lstrip("."), path))
+
+    if not paths:
+        raise err("没有可识别的文件（文件可能为空）")
+
+    _doc_job_cleanup()
+    job_id = _uuid.uuid4().hex
+    DOC_JOBS[job_id] = {"status": "running", "progress": 2, "label": "任务已接收，正在开始…",
+                        "created_at": _time.time()}
+    _asyncio.get_event_loop().create_task(_run_doc_job(job_id, user.id, paths))
+    return ok({"job_id": job_id, "file_count": len(paths)})
+
+
+@router.get("/import-doc/{job_id}/status", response_model=ApiResponse)
+def doc_job_status(job_id: str, user: User = Depends(get_current_user)):
+    """轮询材料识别任务状态：{status: running/done/error, progress, label, result?, error?}"""
+    job = DOC_JOBS.get(job_id)
+    if job is None:
+        raise err("任务不存在或已过期，请重新上传")
+    return ok({k: v for k, v in job.items() if k != "created_at"})
 
 
 class ImportPackageRequest(BaseModel):

@@ -49,7 +49,7 @@ export default function DebtListPage() {
           ])
           const bankItems = bank.data?.items || []
           const featuredItems = (featured.data?.items || []).filter((it) => {
-            const disc = (it.detail || {}).discount || ''
+            const disc = (it.detail || {}).discount || (it.detail || {}).discount_rate || ''
             return /[01234]\.?\d*折/.test(disc) || /破产|重整/.test((it.tags || []).join(''))
           })
           list = [...bankItems, ...featuredItems]
@@ -73,7 +73,7 @@ export default function DebtListPage() {
     if (discount) {
       const max = parseFloat(discount)
       list = list.filter((it) => {
-        const m = ((it.detail || {}).discount || '').match(/([\d.]+)折/)
+        const m = (((it.detail || {}).discount || (it.detail || {}).discount_rate || '')).match(/([\d.]+)折/)
         return m ? parseFloat(m[1]) <= max : false
       })
     }
@@ -106,7 +106,7 @@ export default function DebtListPage() {
 
   // 批量尽调（仅精选债权可用；已尽调债权不可重复选取）
   const startBatchDD = async () => {
-    if (!token) { message.warning('请先登录后发起尽调'); navigate('/login'); return }
+    if (!token) { message.warning('请先登录后发起尽调'); navigate('/login', { state: { from: window.location.pathname + window.location.search } }); return }
     if (selectedKeys.length === 0) { message.warning('请至少勾选 1 条债权'); return }
     if (selectedKeys.length > 5) { message.warning('单次最多勾选 5 条'); return }
     setDdLoading(true)
@@ -191,7 +191,7 @@ export default function DebtListPage() {
     { title: '债权金额', key: 'claim', width: 120, render: (_, r) => <Text strong style={{ color: 'var(--danger)' }}>{(r.detail || {}).claim_total || '—'}</Text> },
     // 公告无折扣/挂牌价/地区概念 → 不展示（用户 2026-09-03）
     ...(isNoticeTab ? [] : [
-      { title: '折扣', key: 'discount', width: 90, render: (_, r) => <Text style={{ color: 'var(--danger)' }}>{(r.detail || {}).discount || '—'}</Text> },
+      { title: '折扣', key: 'discount', width: 90, render: (_, r) => <Text style={{ color: 'var(--danger)' }}>{((r.detail || {}).discount || (r.detail || {}).discount_rate || '—')}</Text> },
       { title: '挂牌价', key: 'listing', width: 130, render: (_, r) => <Text strong style={{ color: 'var(--danger)' }}>{(r.detail || {}).listing_price || '—'}</Text> },
       { title: '地区', key: 'region', width: 100, render: (_, r) => (r.detail || {}).region || '—' },
     ]),
@@ -235,7 +235,7 @@ export default function DebtListPage() {
 
       {isPick && (
         <Alert type="info" showIcon style={{ marginBottom: 16 }}
-          message="捡漏专区：自动汇集「破产清算/重整」债权与精选债权中折扣 ≤4 折的低本金标的，适合个人投资者。" />
+          message="捡漏专区：破产处置与低价转让的债权机会，适合个人投资者。" />
       )}
 
       {filterBar}

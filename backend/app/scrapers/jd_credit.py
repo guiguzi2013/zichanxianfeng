@@ -485,6 +485,22 @@ def _is_bankrupt(d: dict) -> bool:
     return any(k in title for k in ("破产", "（破）", "(破)", "管理人"))
 
 
+# 破产搜索捡漏只收"债权类"标题（2026-09-05 用户拍板：破产实物一律不收）
+# 债权类关键词：债权/应收/欠款/借款/贷款/款项（如 破产企业对XX的债权 / 破产案应收债权 / 应收账款）
+_BANKRUPT_CLAIM_RE = re.compile(r'债权|应收|欠款|借款|贷款|款项')
+
+
+def _is_physical_asset(title: str) -> bool:
+    """破产条目是否实物资产（商铺/房产/股权/设备/酒/翡翠/车辆/树段等）→ True=不收。
+    2026-09-05 用户拍板口径：破产版块**只收债权类**（标题含 债权/应收/欠款/借款/贷款/款项），
+    其余（商铺/股权/设备/存货/树段/珠宝…）一律视为实物资产不收——宁缺毋滥。
+    """
+    t = title or ""
+    if _BANKRUPT_CLAIM_RE.search(t):
+        return False  # 债权类 → 收
+    return True  # 非债权类（含纯实物/其他）→ 不收
+
+
 def _price_cn_to_yuan(price_cn: str) -> int | None:
     """'2.47312万'/'8748'/'1' → 元"""
     if not price_cn:
@@ -504,6 +520,28 @@ def _price_cn_to_yuan(price_cn: str) -> int | None:
 
 # 捡漏起拍价上限（元）——适合个人投资者的低价捡漏，排除几百几千万大额
 BARGAIN_MAX_PRICE = 1_000_000  # 100 万（可调）
+
+# 流拍可再买(变卖)归捡漏的上限（2026-09-05：与破产捡漏一致 100 万，超出的 AMC 大包变卖不收）
+LIUPAI_MAX_PRICE = BARGAIN_MAX_PRICE
+
+
+def _dedup_latest(items: list[dict]) -> list[dict]:
+    """同标题多场次 → 只留最新一场（source_url 中 paimaiId 最大，京东 paimaiId 单调递增=新场次）。
+    2026-09-05 用户拍板：同名只留最新，避免刷屏。"""
+    best: dict[str, dict] = {}
+    for it in items:
+        m = re.search(r'paimai\.jd\.com/(\d+)', it.get("source_url") or "")
+        pid = int(m.group(1)) if m else 0
+        title = it.get("title") or ""
+        old = best.get(title)
+        if old is None:
+            best[title] = it
+            continue
+        m2 = re.search(r'paimai\.jd\.com/(\d+)', old.get("source_url") or "")
+        old_pid = int(m2.group(1)) if m2 else 0
+        if pid > old_pid:
+            best[title] = it
+    return list(best.values())
 
 
 def _jd_request(params: dict) -> list[dict]:
@@ -548,15 +586,42 @@ def fetch_jd_credit_list(page: int = 1, page_size: int = 40) -> list[dict]:
     return [_map_item(d) for d in kept]
 
 
-def fetch_jd_bargain_list(max_price: int = BARGAIN_MAX_PRICE) -> list[dict]:
-    """京东破产专区捡漏：keyword=破产 + 全类目 + 进行中/即将开始 → 低价标的（适合个人投资者）"""
+def fetch_jd_liupai_list(page: int = 1, page_size: int = 40) -> list[dict]:
+    """京东债权招商「流拍可再买」（liupaiBuyAgain=1，2026-09-05 用户要求抓流拍/变卖类）：
+    债权拍卖流拍后转为变卖模式，仍可按现价直接再买（auctionStatus=2 但可购），信息完整度同普通招商。
+    状态标"流拍可再买"，与普通已结束(不可再买)区分；过滤破产（破产走捡漏搜索）。
+    2026-09-05 用户拍板：流拍可再买归捡漏版块；同名多场次由 sync 去重留最新。
+    """
+    params = dict(JD_SEARCH_PARAMS)
+    params["liupaiBuyAgain"] = "1"
+    params["page"] = page
+    params["pageSize"] = page_size
+    datas = _jd_request(params)
+    kept = [d for d in datas if d.get("auctionStatus") == 2 and not _is_bankrupt(d)]
+    out: list[dict] = []
+    for d in kept:
+        it = _map_item(d)
+        it["detail"]["auction_status"] = "流拍可再买"
+        it["tags"] = [t for t in (it.get("tags") or []) if t not in ("债权招商", "京东拍卖")] + ["流拍可再买", "京东拍卖"]
+        out.append(it)
+    return out
+
+
+def fetch_jd_bargain_list(page: int = 1, page_size: int = 40, max_price: int = BARGAIN_MAX_PRICE) -> list[dict]:
+    """京东破产专区捡漏：keyword=破产 + 全类目 + 进行中/即将开始 → 低价标的（适合个人投资者）
+
+    2026-09-05 用户拍板重定义：
+    - 破产**实物资产**（商铺/房产/股权/设备/酒/翡翠/车辆等）一律不收（观感差且非债权）
+    - 只收破产**债权类**（应收债权/对XX的债权/欠款/借款），起拍价 ≤ max_price
+    - 同时由 sync 把 债权转让/招商版块 里 起拍<1万 或 折<1折 的自动降级进来
+    """
     params = dict(JD_SEARCH_PARAMS)
     params["keyword"] = "破产"
     params["childrenCateId"] = ""
     params["labelSet"] = ""
     params["multiPaimaiStatus"] = "0,1"  # 进行中+即将开始
-    params["page"] = 1
-    params["pageSize"] = 40
+    params["page"] = page
+    params["pageSize"] = page_size
     datas = _jd_request(params)
     out: list[dict] = []
     seen_urls: set[str] = set()
@@ -564,6 +629,9 @@ def fetch_jd_bargain_list(max_price: int = BARGAIN_MAX_PRICE) -> list[dict]:
         title = d.get("title") or ""
         # 只保留破产相关标题（关键词"破产"可能匹配到无关条目）
         if not any(k in title for k in ("破产", "（破产）", "(破产)", "破产清算", "管理人")):
+            continue
+        # 破产实物资产不收（2026-09-05）
+        if _is_physical_asset(title):
             continue
         price_cn = d.get("currentPriceCN") or ""
         price = _price_cn_to_yuan(price_cn)
@@ -576,7 +644,7 @@ def fetch_jd_bargain_list(max_price: int = BARGAIN_MAX_PRICE) -> list[dict]:
             continue
         seen_urls.add(url)
         # 覆盖为捡漏形态
-        item["tags"] = ["破产捡漏", "京东拍卖"]
+        item["tags"] = ["破产债权捡漏", "京东拍卖"]
         if price >= 10_000:
             item["tags"].append(f"起拍{price / 10000:.1f}万")
         else:
@@ -587,9 +655,9 @@ def fetch_jd_bargain_list(max_price: int = BARGAIN_MAX_PRICE) -> list[dict]:
         # 2026-09-02：保留 _paimai_id（sync 详情补全需要，不再 pop）
         detail["auction_status"] = {1: "进行中", 3: "即将开始"}.get(d.get("auctionStatus"), "—")
         detail["listing_price"] = detail["current_price"]
-        detail["bargain_note"] = "破产处置资产，起拍价远低于市场价，适合个人投资者低价参与；请自行核实权属、占用、税费等风险。"
+        detail["bargain_note"] = "破产债权处置，起拍价远低于市场价，适合个人投资者低价参与；请自行核实权属、占用、税费等风险。"
         item["detail"] = detail
-        item["summary"] = f"{detail.get('region', '')}·{detail['auction_status']}·起拍{detail.get('listing_price', '')} 破产处置，低价捡漏。"
+        item["summary"] = f"{detail.get('region', '')}·{detail['auction_status']}·起拍{detail.get('listing_price', '')} 破产债权处置，低价捡漏。"
         out.append(item)
     return out
 
@@ -777,23 +845,46 @@ def _enrich_jd_detail(d: dict, paimai_id: str) -> None:
     __import__("time").sleep(0.3)  # 接口限速
 
 
+# 每源抓取页数（2026-09-05 用户拍板：扩大抓取范围，每源 5 页约 200 条；
+# 同日二次修正：用户看到灌爆后喊停"够多了停止抓取"——页面量已足，后续同步保持此页数即可，不再加大）
+JD_FETCH_PAGES = 5
+
+
 def sync_jd_credit_to_feed() -> dict:
-    """主入口：抓京东债权招商 → 精选债权 + 破产低价标的 → 捡漏。返回统计。"""
+    """主入口：抓京东债权招商 → 精选债权 + 捡漏。返回统计。
+
+    2026-09-05 用户拍板重定义（二次修正）：
+    - 精选(featured)：债权转让/招商版块（类目109，进行中/即将开始，非破产）
+    - 捡漏(bargain)：①破产版块债权类（实物不收）②债权招商里 起拍<1万 或 折<1折 的自动降级
+                     ③流拍可再买（liupaiBuyAgain=1 变卖，独立归捡漏、同标题去重留最新）
+    - 入库前过内容门槛（quality）：占位/一句话正文不算实质，没正文的放弃
+    """
     from ..database import SessionLocal
 
     featured: list[dict] = []
     bargain: list[dict] = []
-    bargain_raw: list[dict] = []
     try:
         featured_raw: list[dict] = []
-        for pg in (1, 2):
+        for pg in range(1, JD_FETCH_PAGES + 1):
             got = fetch_jd_credit_list(pg, 40)
             if got:
                 featured_raw.extend(got)
-        bargain_raw = fetch_jd_bargain_list()
+        # 流拍可再买（变卖模式，仍可购；2026-09-05 用户要求"流拍的也抓取来"，但只抓变卖/重新上拍类）
+        liupai_raw: list[dict] = []
+        for pg in range(1, JD_FETCH_PAGES + 1):
+            got = fetch_jd_liupai_list(pg, 40)
+            if got:
+                liupai_raw.extend(got)
+        bargain_raw: list[dict] = []
+        for pg in range(1, JD_FETCH_PAGES + 1):
+            got = fetch_jd_bargain_list(pg, 40)
+            if got:
+                bargain_raw.extend(got)
     except Exception as e:  # noqa: BLE001
         logger.exception("京东同步失败: %s", e)
         featured_raw = []
+        liupai_raw = []
+        bargain_raw = []
     # 自动分类：起拍价 < 10000 元 或 折扣 < 1 折（discountRate 语义：8.0=8折）→ 归捡漏（用户规则 2026-08-31）
     # 同时调详情接口补债权本金（extendInfoMap.claimsMoney）+ 公告表格补利息/罚息
     for it in featured_raw:
@@ -810,7 +901,24 @@ def sync_jd_credit_to_feed() -> dict:
         else:
             featured.append(it)
 
-    # 破产搜索捡漏（2026-09-02 修复：此前不走详情解析，原文表格/利息/抵押物未抓——465 案例）
+    # 流拍可再买 → 捡漏（2026-09-05 拍板：归捡漏专区；同标题去重留最新；打码个人债权保留展示）
+    # 2026-09-05 二次修正：此前误并入 featured_raw 分类 → featured 被流拍灌爆，现独立归 bargain
+    liupai_raw = _dedup_latest(liupai_raw)
+    for it in liupai_raw:
+        d = it["detail"]
+        price = d.pop("_price_yuan", 0) or 0
+        paimai_id = d.pop("_paimai_id", "") or ""
+        if price and price > LIUPAI_MAX_PRICE:
+            continue  # 超过个人可参与上限的变卖大包不收
+        if paimai_id:
+            _enrich_jd_detail(d, paimai_id)
+        d["auction_status"] = "流拍可再买"
+        d["listing_price"] = d.get("listing_price") or d.get("current_price")
+        d["bargain_note"] = d.get("bargain_note") or "债权流拍后变卖可再买，按现价可直接参与；请自行核实权属、占用、税费等风险。"
+        it["summary"] = f"{d.get('region', '')}·流拍可再买·{d.get('listing_price', '')} 变卖债权，低价捡漏。"
+        bargain.append(it)
+
+    # 破产搜索捡漏（2026-09-05 重定义：只收债权类；实物资产已在 fetch 层剔除；详情补全）
     for it in bargain_raw:
         d = it["detail"]
         paimai_id = d.pop("_paimai_id", "") or ""
@@ -819,10 +927,18 @@ def sync_jd_credit_to_feed() -> dict:
         bargain.append(it)
 
     db = SessionLocal()
+    dropped = 0
     try:
+        from .quality import is_complete, completeness_missing
         for it in featured:
+            if not is_complete(it, section="featured"):
+                dropped += 1
+                continue
             _upsert_feed(db, it, section="featured")
         for it in bargain:
+            if not is_complete(it, section="bargain"):
+                dropped += 1
+                continue
             _upsert_feed(db, it, section="bargain")
         db.commit()
         from ..models import FeedItem
@@ -830,6 +946,7 @@ def sync_jd_credit_to_feed() -> dict:
         bargain_total = db.query(FeedItem).filter(FeedItem.section == "bargain").count()
     finally:
         db.close()
-    logger.info("京东同步完成: 精选 %d 条, 捡漏 %d 条", len(featured), len(bargain))
+    logger.info("京东同步完成: 精选 %d 条, 捡漏 %d 条, 因信息不全放弃 %d 条", len(featured), len(bargain), dropped)
     return {"fetched_featured": len(featured), "fetched_bargain": len(bargain),
+            "dropped_incomplete": dropped,
             "featured_total": feat_total, "bargain_total": bargain_total}

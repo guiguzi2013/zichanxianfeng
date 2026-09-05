@@ -134,14 +134,14 @@ export default function PropertyCluesPage() {
   // 名称变体解析（查无此名时）：尝试常见变体，找到现用名即停
   const resolveName = async (name) => {
     const est = 6 * 8 // 最多 6 个变体 × 8 分
-    const ok = window.confirm(`「${name}」查询结果为空，可能使用了曾用名/简称。\n将尝试最多 6 个常见名称变体（每个约 8 分，命中即停），预计最多消耗 ${est} 分。\n确认继续？`)
+    const ok = window.confirm(`「${name}」查询结果为空，可能使用了曾用名/简称。\n将自动尝试常见名称变体，找到现用名称即停，预计最多消耗 ${est} 分。\n确认继续？`)
     if (!ok) return
     setResolveLoading(true)
     try {
       const resp = await cluesApi.resolveName(name)
       setResolveResult({ name, ...resp.data })
       if (resp.data?.matched_name) {
-        message.success(`已找到现用名称：${resp.data.registered_name}（新增 ${resp.data.calls_used} 次调用）`)
+        message.success(`已找到现用名称：${resp.data.registered_name}`)
       } else {
         message.warning('常见变体均未命中，请人工核对准确名称')
       }
@@ -158,7 +158,7 @@ export default function PropertyCluesPage() {
       const idx = lines.findIndex((l) => l === resolveResult.name)
       if (idx >= 0) lines[idx] = resolveResult.matched_name
       setNames(lines.join('\n'))
-      message.success('已用现用名称替换输入框中的旧名称，可重新查询（缓存命中零积分）')
+      message.success('已用现用名称替换输入框中的旧名称，可重新查询')
     }
     setResolveResult(null)
   }
@@ -205,7 +205,7 @@ export default function PropertyCluesPage() {
           }
           return r
         }))
-        message.success(`已重新查询「${company}」（删除 ${resp.deleted ?? 0} 条缓存）`)
+        message.success(`已重新查询「${company}」`)
       } else {
         message.error(resp.error || `刷新「${company}」失败`)
       }
@@ -264,7 +264,7 @@ export default function PropertyCluesPage() {
     const ok = window.confirm(
       `将生成「深度对比版」综合分析报告：\n` +
       `对 ${companies.length} 家企业逐一深度调查（原版财产追踪 + 资产维度/变现难度/变现路径/线下指引）。\n` +
-      `预计消耗约 ${est} 企查查积分（已缓存企业零新增，实际可能更少）。\n` +
+      `预计消耗约 ${est} 积分（近期已查的企业不重复计费，实际可能更少）。\n` +
       `确认继续？`
     )
     if (!ok) return
@@ -338,14 +338,14 @@ export default function PropertyCluesPage() {
       setError('请先输入企业名称（每行一个），或上传判决书自动识别')
       return
     }
-    // 未登录：可浏览页面/识别主体，但发起企查查查询需先登录（保护积分成本）
+    // 未登录：可浏览页面/识别主体，但发起财产线索查询需先登录
     if (!token) {
       Modal.confirm({
         title: '登录后即可查询',
-        content: '财产线索查询需要消耗企查查积分，请先登录后再发起查询。（未登录可上传材料识别主体、浏览页面）',
+        content: '财产线索查询需要登录后使用，请先登录后再发起查询。（未登录可上传材料识别主体、浏览页面）',
         okText: '去登录',
         cancelText: '取消',
-        onOk: () => navigate('/login'),
+        onOk: () => navigate('/login', { state: { from: window.location.pathname + window.location.search } }),
       })
       return
     }
@@ -370,7 +370,7 @@ export default function PropertyCluesPage() {
     const out = persons.map((n) => ({ company: n, isPerson: true, data: null }))
     setResults([...out])
     if (persons.length > 0) {
-      setProgress(`自然人（${persons.join('、')}）跳过企查查（零积分），仅查询企业…`)
+      setProgress(`自然人（${persons.join('、')}）无需工商查询，仅查询企业…`)
     }
     const CONCURRENCY = 2 // 2 家并行，提速且避免触发企查查限流
     for (let i = 0; i < companies.length; i += CONCURRENCY) {
@@ -453,7 +453,7 @@ export default function PropertyCluesPage() {
             <Alert
               type="info"
               showIcon
-              message={`自然人「${r.company}」：未消耗企查查积分（个人无企业数据）。个人资产需通过律师调查令、法院财产报告令等方式线下查询。`}
+              message={`自然人「${r.company}」：个人名下无工商登记数据，系统不展示公司类信息。个人资产需通过律师调查令、法院财产报告令等方式线下查询。`}
             />
           </div>
           {cref.length > 0 && (
@@ -483,7 +483,7 @@ export default function PropertyCluesPage() {
     if (r.error || !r.data) {
       return (
         <Card title={r.company} style={{ marginBottom: 16 }}>
-          <Alert type="error" showIcon message={r.error || '查询失败（请确认网络/企查查凭证）'} />
+          <Alert type="error" showIcon message={r.error || '查询失败，请稍后重试'} />
         </Card>
       )
     }
@@ -502,7 +502,6 @@ export default function PropertyCluesPage() {
           <Space>
             <span style={{ fontWeight: 700 }}>{r.company}</span>
             {isPerson && <Tag color="purple">自然人</Tag>}
-            {data.cached && <Tag color="blue">缓存</Tag>}
             {!isPerson && regData['登记状态'] && (
               <Tag color={regData['登记状态'] === '存续' || regData['登记状态'] === '在业' || regData['登记状态'] === '在营（开业）企业' ? 'green' : 'red'}>
                 {regData['登记状态']}
@@ -529,7 +528,7 @@ export default function PropertyCluesPage() {
                   icon={<ReloadOutlined />}
                   loading={refreshLoading === r.company}
                   onClick={() => refreshCompany(r.company)}
-                  title="强制刷新：删除该企业缓存后重新实查（会重新消耗积分，仅管理员可用）"
+                  title="强制刷新该企业的查询结果（重新实查）"
                 >
                   强制刷新
                 </Button>
@@ -550,7 +549,7 @@ export default function PropertyCluesPage() {
         )}
         {isPerson && (
           <div style={{ marginBottom: 12 }}>
-            <Alert type="info" showIcon message={`「${r.company}」为自然人：系统不展示公司工商/财产信息（企查查查询结果多为同名企业，不代表个人名下资产）。个人资产需通过律师调查令、法院财产报告令等方式线下查询。`} />
+            <Alert type="info" showIcon message={`「${r.company}」为自然人：系统不展示公司工商/财产信息（同名企业查询结果不代表个人名下资产）。个人资产需通过律师调查令、法院财产报告令等方式线下查询。`} />
           </div>
         )}
         {/* 自然人身份关联（交叉验证）：同名自然人与查询企业的法定代表人/股东匹配 → 身份确认 */}
@@ -673,13 +672,13 @@ export default function PropertyCluesPage() {
           <FundOutlined /> 财产线索查询
         </div>
         <Text type="secondary">
-          输入债务人、保证人、关联企业名称（每行一个），系统逐个查询企查查：对外投资 / 股东 / 分支机构 / 动产抵押 / 土地抵押 / 司法拍卖 + 被执行 / 失信 / 限高 / 终本 / 股权冻结等风险线索。同一企业 24 小时内重复查询走缓存（零积分）。
+          输入债务人、保证人、关联企业名称（每行一个），系统逐个查询：对外投资 / 股东 / 分支机构 / 动产抵押 / 土地抵押 / 司法拍卖 + 被执行 / 失信 / 限高 / 终本 / 股权冻结等风险线索。同一企业 24 小时内重复查询不重复计费。
         </Text>
         <Alert
           style={{ marginTop: 10 }}
           type="info"
           showIcon
-          message="合规声明：数据来自公开渠道（司法公开 / 信用公示 / 企查查），仅供合法债权追偿、诉讼等正当用途，禁止用于骚扰、人肉、恐吓等非法目的；自然人身份锚点仅用于区分重名，请勿滥用。"
+          message="合规声明：数据来自公开渠道（司法公开 / 信用公示 / 拍卖平台），仅供合法债权追偿、诉讼等正当用途，禁止用于骚扰、人肉、恐吓等非法目的；自然人身份锚点仅用于区分重名，请勿滥用。"
         />
         <Input.TextArea
           rows={6}
@@ -690,10 +689,10 @@ export default function PropertyCluesPage() {
         />
         <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
           <Button size="large" icon={<FileTextOutlined />} loading={caseLoading} onClick={generateCaseReport}>
-            综合分析报告{estimatedCredits > 0 ? `（预计~${estimatedCredits}分）` : ''}
+            综合分析报告
           </Button>
           <Button size="large" icon={<FundOutlined />} loading={deepCaseLoading} onClick={generateCaseReportDeep}>
-            深度对比版{deepCaseEstimate > 0 ? `（预计~${deepCaseEstimate}分）` : ''}
+            深度对比版
           </Button>
           <Button type="primary" size="large" icon={<SearchOutlined />} loading={loading} onClick={onStartClick}>
             开始查询（{names.split('\n').filter((s) => s.trim()).length} 家）
@@ -788,7 +787,7 @@ export default function PropertyCluesPage() {
                 style={{ marginTop: 8 }}
                 type="warning"
                 showIcon
-                message={`${recognized.entities.filter((e) => e.ok === false).length} 个名称疑似有误（红标），查询前请核对，避免浪费企查查积分`}
+                message={`${recognized.entities.filter((e) => e.ok === false).length} 个名称疑似有误（红标），查询前请核对，避免查错对象`}
               />
             )}
             {recognized.note && <Text type="secondary" style={{ fontSize: 12 }}>{recognized.note}</Text>}
@@ -831,7 +830,7 @@ export default function PropertyCluesPage() {
           <Alert
             type="info"
             showIcon
-            message={`预计消耗约 ${estimatedCredits} 积分（${pendingNames.filter((n) => !isPersonName(n)).length} 家企业 × 8 分；缓存命中与自然人不计）。`}
+            message={`预计消耗约 ${estimatedCredits} 积分（${pendingNames.filter((n) => !isPersonName(n)).length} 家企业；近期已查过的企业不重复计费，自然人无需查询）。`}
             style={{ marginBottom: 12 }}
           />
           <Text strong>即将查询（{pendingNames.length} 家）：</Text>
@@ -878,7 +877,7 @@ export default function PropertyCluesPage() {
               ))}
               {caseReport.not_queried && caseReport.not_queried.length > 0 && (
                 <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
-                  未走企查查查询的主体（多为自然人）：{caseReport.not_queried.map((s) => `${s.name}（${s.role}）`).join('、')}——个人资产需线下调查，可结合其企业任职线索追索。
+                  未查询的主体（多为自然人）：{caseReport.not_queried.map((s) => `${s.name}（${s.role}）`).join('、')}——个人资产需线下调查，可结合其企业任职线索追索。
                 </div>
               )}
 
@@ -911,7 +910,7 @@ export default function PropertyCluesPage() {
               )}
 
               <Text type="secondary" style={{ fontSize: 12 }}>
-                报告说明：本次新增企查查调用 {caseReport.stats?.new_calls ?? 0} 次，缓存命中 {caseReport.stats?.cached_hits ?? 0} 次，自然人跳过 {caseReport.stats?.skipped_persons ?? 0} 人。数据来自公开渠道，仅供合法债权追偿使用。
+                报告说明：数据来自公开渠道，仅供合法债权追偿使用。
               </Text>
             </>
           )}
@@ -972,7 +971,7 @@ export default function PropertyCluesPage() {
                 <Text strong>二、深度调查明细（每家企业）：</Text>
                 {Object.entries(deepCaseReport.deep?.reports || {}).map(([name, dr]) => (
                   <Card key={name} size="small" style={{ marginBottom: 10 }} title={name}
-                    extra={dr.matched ? <Tag color="green">深度调查完成{dr.cached ? '（缓存）' : ''}</Tag> : <Tag color="red">未完成</Tag>}>
+                    extra={dr.matched ? <Tag color="green">深度调查完成</Tag> : <Tag color="red">未完成</Tag>}>
                     {!dr.matched ? (
                       <Text type="secondary" style={{ fontSize: 12 }}>{dr.reason}</Text>
                     ) : (
@@ -995,7 +994,7 @@ export default function PropertyCluesPage() {
               </div>
 
               <Text type="secondary" style={{ fontSize: 12 }}>
-                积分说明：原版新增 {deepCaseReport.stats?.standard?.new_calls ?? 0} 次调用；深度调查缓存命中 {deepCaseReport.stats?.deep_cached ?? 0} 家、新查 {deepCaseReport.stats?.deep_calls ?? 0} 家（预估约 {deepCaseReport.stats?.deep_estimate_total ?? 0} 积分）。数据来自公开渠道，仅供合法债权追偿使用。
+                数据来自公开渠道，仅供合法债权追偿使用。
               </Text>
             </>
           )}
@@ -1021,20 +1020,12 @@ export default function PropertyCluesPage() {
           {resolveResult?.matched_name ? (
             <>
               <Alert type="success" showIcon message={`已找到现用名称：${resolveResult.registered_name}`} style={{ marginBottom: 12 }} />
-              <Text>解析过程（尝试 {resolveResult.tried?.length} 个变体，新增 {resolveResult.calls_used} 次调用）：</Text>
-              <div style={{ marginTop: 8, maxHeight: 200, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 12px' }}>
-                {resolveResult.tried?.map((t, i) => (
-                  <div key={i} style={{ padding: '4px 0', fontSize: 13 }}>
-                    {i + 1}. {t.name} {t.name === resolveResult.matched_name ? '✅ 命中' : t.used_cache ? '（缓存）' : t.negative ? '（近期查无，已跳过）' : '（未命中）'}
-                  </div>
-                ))}
-              </div>
-              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
-                该名称已在缓存中，用现用名称查询零积分。
+              <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                建议使用现用名称查询，可避免因曾用名/简称造成的偏差。
               </Text>
             </>
           ) : (
-            <Alert type="warning" showIcon message="尝试全部常见变体均未命中，请人工核对准确名称（可参考天眼查/企查查网页搜索）。" />
+            <Alert type="warning" showIcon message="尝试全部常见名称变体均未命中，请核对准确名称后重试。" />
           )}
         </Modal>
 
@@ -1051,12 +1042,12 @@ export default function PropertyCluesPage() {
           <Alert
             type="warning"
             showIcon
-            message={`将对「${deepConfirm?.company}」进行深度调查，预计消耗约 ${deepConfirm?.estimate ?? 16} 企查查积分（有缓存时更少，约 8-22 分）。`}
+            message={`将对「${deepConfirm?.company}」进行深度调查，预计消耗约 ${deepConfirm?.estimate ?? 16} 积分（近期已查的企业更少，约 8-22 分）。`}
             description="深度调查在财产线索基础上追加：对外应收债权/未来收入（作为原告的涉诉）、询价评估、财产悬赏、股权冻结/出质、担保、终本、年报/财务/发票等维度，并给出每类资产的变现难度与变现路径、线下查询指引。"
             style={{ marginBottom: 12 }}
           />
           <Text type="secondary" style={{ fontSize: 12 }}>
-            同企业 24 小时内重复深度调查零新增积分（结果缓存）。若名称与工商不符（曾用名/简称），请先"尝试名称变体解析"核对后再调查，避免浪费积分。
+            同企业 24 小时内重复深度调查不重复计费。若名称与工商登记不符（曾用名/简称），请先"尝试名称变体解析"核对后再调查。
           </Text>
         </Modal>
 
@@ -1080,7 +1071,6 @@ export default function PropertyCluesPage() {
                 style={{ marginBottom: 12 }}
               />
               <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
-                本次调用：{deepResult.cached ? '缓存命中，0 积分' : `约 ${deepResult.estimate ?? deepResult.report.calls_used ?? 16} 积分`}。
                 {deepResult.report.scan_summary ? `风险扫描：${deepResult.report.scan_summary}` : ''}
               </Text>
 
@@ -1141,7 +1131,7 @@ export default function PropertyCluesPage() {
           okText="仍然查询（自负风险）"
           cancelText="返回修改"
         >
-          <Alert type="warning" showIcon message="以下名称可能存在误差，直接查询可能浪费企查查积分：" style={{ marginBottom: 12 }} />
+          <Alert type="warning" showIcon message="以下名称可能存在误差，直接查询可能查不到目标主体：" style={{ marginBottom: 12 }} />
           {(verifyModal?.bad || []).map((b, i) => (
             <div key={i} style={{ marginBottom: 8 }}>
               <Tag color="red">{b.name}</Tag>

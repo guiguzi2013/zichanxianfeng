@@ -32,25 +32,44 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # ---------------- 字体注册 ----------------
-# 候选字体：Windows 优先，其次常见 Linux 路径（Docker 需安装 fonts-noto-cjk）
+# 字体统一放【项目根目录 font/】（随仓库上传，本地/服务器一致，文件名用英文避免兼容问题）：
+#   font/fzxbs.ttf(方正小标宋) / msyh.ttc(雅黑) / msyhbd.ttc(雅黑粗) / simsun.ttc(宋体)
+# 目录定位用 __file__ 相对路径 → 项目根（目录改名 nplcn 后依旧有效）；容器内由 Dockerfile
+# COPY 到 /app/font（卷外，避免 zxf-data 卷掩盖镜像内新文件）。再回退 Windows/Linux 系统字体。
+# 2026-09-05：不再依赖 Q:\deepseek\font 等外部绝对路径。
+_PROJ_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))  # backend/.. → 项目根
+_DATA_FONTS = os.path.join(_PROJ_ROOT, "font")
+_CONTAINER_FONTS = "/app/font"  # Docker 卷外字体目录
+
+
+def _proj(name: str) -> str:
+    # 容器优先卷外 /app/font（存在才用）；否则项目根 font/
+    if _CONTAINER_FONTS and os.path.isdir(_CONTAINER_FONTS) and os.path.exists(os.path.join(_CONTAINER_FONTS, name)):
+        return os.path.join(_CONTAINER_FONTS, name)
+    return os.path.join(_DATA_FONTS, name)
+
+
 _MSYH_CANDIDATES = [
+    _proj("msyh.ttc"),                                  # 项目 font/（推荐，两端一致）
     r"C:\Windows\Fonts\msyh.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
 ]
 _MSYHBD_CANDIDATES = [
+    _proj("msyhbd.ttc"),
     r"C:\Windows\Fonts\msyhbd.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
     "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
 ]
 _SIMSUN_CANDIDATES = [
+    _proj("simsun.ttc"),
     r"C:\Windows\Fonts\simsun.ttc",
     "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
 ]
-# 封面大标题专用：方正小标宋（用户提供，公文书标题字体）
+# 封面大标题专用：方正小标宋（公文书标题字体；项目 font/fzxbs.ttf）
 _FZXBS_CANDIDATES = [
+    _proj("fzxbs.ttf"),
     r"Q:\deepseek\font\方正小标宋简体.ttf",
-    r"Q:\deepseek\zichanxianfeng\backend\data\fonts\方正小标宋简体.ttf",
     r"C:\Windows\Fonts\FZXBSJW.TTF",
     r"C:\Windows\Fonts\方正小标宋简体.ttf",
 ]
@@ -360,12 +379,16 @@ def _render_claim_basic(s: dict) -> list:
     bt = s.get("basic_table") or {}
     rows = [
         ("债务人名称", bt.get("debtor_name") or "—"),
+        ("债权人", (bt.get("creditor") or bt.get("loan_bank")) or "—"),
+        ("债权类型", bt.get("debt_type") or "—"),
         ("债权本金", _fmt_cents(bt.get("principal_cents"))),
         ("利息/罚息", _fmt_cents(bt.get("interest_cents"))),
+        ("利息计算方式", bt.get("interest_method") or "—"),
         ("担保类型", bt.get("guaranty_type") or "—"),
         ("担保人", bt.get("guarantor") or "无"),
         ("抵押物", bt.get("collateral") or "无"),
         ("司法状态", bt.get("judicial_status") or "—"),
+        ("是否胜诉", bt.get("judgment_result") or "—"),
         ("地区", bt.get("region") or "—"),
         ("抵押物类型", bt.get("collateral_type") or "—"),
         # 2026-09-02：房产证/抵押物明细（证上有的字段全部展示）
@@ -466,6 +489,9 @@ def _render_debtor(s: dict) -> list:
                     flow.append(Paragraph(f"股东信息：{_esc(note)}", _styles()["note"]))
         for f in s.get("risk_factors") or []:
             flow.append(Paragraph(f"• {_esc(f.get('label') or '')}：{f.get('count') or 0} 条", _styles()["li"]))
+            if f.get("sample"):
+                # 只扫命中清单 + 缓存已有明细示例（2026-09-04 用户确认：有案号等一并展示，零积分）
+                flow.append(Paragraph(f"　示例：{_esc(f['sample'])}", _styles()["note"]))
     return flow
 
 
@@ -487,6 +513,14 @@ def _render_collateral(s: dict) -> list:
     if not s.get("present"):
         note = _pdf_clean_note(s.get("note") or "无抵押物信息。")
         flow.append(Paragraph(_esc(note or "无抵押物信息。"), _styles()["note"]))
+        return flow
+    # 融资租赁设备债权（2026-09-04 用户确认）：展示设备清单/“设备租赁”，不做估价与覆盖率
+    if s.get("lease_equipment"):
+        flow.append(Paragraph(_esc(s.get("collateral_desc") or "设备租赁"), _styles()["body"]))
+        note = _pdf_clean_note(s.get("note") or s.get("liquidity") or "")
+        if note:
+            flow.append(Spacer(1, 4))
+            flow.append(Paragraph(_esc(note), _styles()["note"]))
         return flow
     flow.append(Paragraph(_esc(s.get("collateral_desc") or "—"), _styles()["body"]))
 

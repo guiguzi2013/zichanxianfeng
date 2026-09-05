@@ -12,6 +12,7 @@ import {
   SwapOutlined,
   BankOutlined,
   FileTextOutlined,
+  IdcardOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import client from '../api/client'
@@ -146,7 +147,7 @@ export default function HomePage() {
           <span className="rank-pct">{r.market_share}%</span>
         </li>
       ))}
-      {list.length === 0 && <li style={{ color: 'var(--text-weak)' }}>暂无数据，请在管理后台录入</li>}
+      {list.length === 0 && <li style={{ color: 'var(--text-weak)' }}>暂无数据</li>}
     </ul>
   )
 
@@ -330,10 +331,10 @@ export default function HomePage() {
           <div style={{ marginTop: 16 }}>
             <Row gutter={[12, 12]}>
               {[
-                { icon: <RobotOutlined />, label: '智能尽调', desc: '单笔/批量债权尽调', path: '/upload', color: '#1a5fb4' },
-                { icon: <FundOutlined />, label: '财产线索', desc: '债务人/担保人财产调查', path: '/property-clues', color: '#389e0d' },
+                { icon: <RobotOutlined />, label: '债权尽调', desc: '单笔/批量债权尽调', path: '/upload', color: '#1a5fb4' },
+                { icon: <IdcardOutlined />, label: '债务人画像', desc: '企业速览·一键生成PDF', path: '/debtor-profile', color: '#722ed1' },
                 { icon: <SwapOutlined />, label: '土地厂房估价', desc: '成本法', path: '/valuation', color: '#d48806' },
-                { icon: <BankOutlined />, label: '商业房产估价', desc: '市场价·取最低价', path: '/valuation/commercial', color: '#722ed1' },
+                { icon: <FundOutlined />, label: '财产线索', desc: '债务人/担保人财产调查', path: '/property-clues', color: '#389e0d' },
               ].map((e) => (
                 <Col xs={12} md={6} key={e.label}>
                   <div className="kpi-card" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', background: '#fff' }} onClick={() => navigate(e.path)}>

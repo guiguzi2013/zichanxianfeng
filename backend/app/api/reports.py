@@ -58,6 +58,7 @@ def my_reports(user: User = Depends(get_current_user), db: Session = Depends(get
         except Exception:  # noqa: BLE001
             debtor = ""
         out.append({
+            "type": "dd",
             "report_id": report.id,
             "task_id": report.task_id,
             "claim_id": report.claim_id,
@@ -66,6 +67,21 @@ def my_reports(user: User = Depends(get_current_user), db: Session = Depends(get
             "task_status": task.status,
             "created_at": report.created_at.isoformat() if report.created_at else None,
         })
+    # 2026-09-04：债务人画像（企业速览）报告并入"我的报告"，可回看/重复下载
+    from ..models import QccProfile
+    profiles = db.query(QccProfile).filter(QccProfile.user_id == user.id).order_by(QccProfile.id.desc()).all()
+    for p in profiles:
+        out.append({
+            "type": "profile",
+            "profile_id": p.id,
+            "debtor_name": p.company,
+            "task_status": "done",
+            "version": 1,
+            "queried_at": p.queried_at,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+        })
+    # 2026-09-04：合并后按生成时间倒序（新生成的报告在最上面）
+    out.sort(key=lambda x: x.get("created_at") or "", reverse=True)
     return ok({"reports": out})
 logger = logging.getLogger(__name__)
 

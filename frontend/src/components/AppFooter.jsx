@@ -13,8 +13,9 @@ export default function AppFooter() {
           <div className="footer-col-title">关于平台</div>
           <a onClick={go('/')}>平台介绍</a>
           <a onClick={go('/upload')}>智能尽调</a>
+          <a onClick={go('/property-clues')}>财产线索</a>
+          <a onClick={go('/debtor-profile')}>债务人画像</a>
           <a onClick={go('/valuation')}>土地厂房估价</a>
-          <a onClick={go('/valuation/commercial')}>商业房产估价</a>
           <a>用户协议</a>
           <a>隐私政策</a>
           <a>意见反馈</a>
@@ -22,16 +23,16 @@ export default function AppFooter() {
         <div className="footer-col">
           <div className="footer-col-title">联系我们</div>
           <p>服务热线：400-000-0000</p>
-          <p>客户服务：service@zichanxianfeng.com</p>
-          <p>商务合作：biz@zichanxianfeng.com</p>
+          <p>客户服务：service@nplcn.cn</p>
+          <p>商务合作：biz@nplcn.cn</p>
           <p>工作时间：工作日 9:00-18:00</p>
         </div>
         <div className="footer-col">
           <div className="footer-col-title">快捷导航</div>
           <a onClick={go('/')}>债权公告</a>
           <a onClick={go('/upload')}>智能尽调</a>
+          <a onClick={go('/debtor-profile')}>债务人画像</a>
           <a onClick={go('/valuation')}>土地厂房估价</a>
-          <a onClick={go('/valuation/commercial')}>商业房产估价</a>
           <a onClick={go('/tasks')}>我的任务</a>
           <a onClick={go('/admin')}>管理后台</a>
         </div>
@@ -43,7 +44,7 @@ export default function AppFooter() {
         </div>
       </div>
       <div className="footer-bottom">
-        数据来源：国家企业信用信息公示系统 ｜ 中国执行信息公开网 ｜ 企查查 ｜ 用户提供
+        数据来源：公开渠道（司法公开 / 信用公示 / 拍卖平台）
         <br />
         Copyright ©2025-2026 NPL CN 版权所有 ｜ 中国不良资产 · 尽调与投融资
       </div>

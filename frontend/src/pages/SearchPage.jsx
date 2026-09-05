@@ -123,7 +123,7 @@ export default function SearchPage() {
                 <RobotOutlined style={{ fontSize: 32, color: 'var(--primary)' }} />
                 <div style={{ fontSize: 15, fontWeight: 700, margin: '10px 0 4px' }}>🧾 这是你的债权？</div>
                 <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
-                  上传材料或粘贴链接，系统自动提取要素并生成尽调报告
+                  上传文件或粘贴文本，系统自动提取要素并生成尽调报告
                 </Text>
                 <Space>
                   <Button type="primary" onClick={() => navigate('/upload')}>上传/粘贴尽调 <ArrowRightOutlined /></Button>

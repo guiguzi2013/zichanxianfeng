@@ -18,11 +18,21 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 def _check_claim_key_fields(db: Session, user_id: int, claim_ids: list[int]) -> None:
     """关键字段校验：债务人/本金/抵押物(合格) 任一缺失则不允许发起尽调
-    （产品决策 2026-08-20；抵押物合格判定 2026-09-02 用户细化：房产类+描述具体）"""
+    （产品决策 2026-08-20；抵押物合格判定 2026-09-02 用户细化：房产类+描述具体；
+    融资租赁设备债权例外 2026-09-04：设备视同有抵押物，可尽调）"""
     for cid in claim_ids:
         claim = db.get(Claim, cid)
         if claim is None or claim.user_id != user_id:
             raise err(f"债权记录 {cid} 不存在")
+        extra = {}
+        try:
+            extra = json.loads(claim.extra_fields) if claim.extra_fields else {}
+        except Exception:
+            extra = {}
+        # 融资租赁：设备（租赁物）充当担保物，视同有抵押物（不做设备估价/覆盖率）
+        lease = (extra.get("lease_equipment") == "1"
+                 or (extra.get("debt_type") and "融资租赁" in str(extra.get("debt_type")))
+                 or (claim.collateral and "设备租赁" in claim.collateral))
         missing = []
         for k in KEY_FIELDS:
             v = getattr(claim, k)
@@ -30,11 +40,8 @@ def _check_claim_key_fields(db: Session, user_id: int, claim_ids: list[int]) -> 
                 if v is None:
                     missing.append(KEY_FIELD_LABELS[k])
             elif k == "collateral":
-                extra = {}
-                try:
-                    extra = json.loads(claim.extra_fields) if claim.extra_fields else {}
-                except Exception:
-                    extra = {}
+                if lease:
+                    continue  # 融资租赁视同有抵押物
                 if not is_valid_collateral(v, extra.get("collateral_type")):
                     missing.append(KEY_FIELD_LABELS[k])
             elif not v:

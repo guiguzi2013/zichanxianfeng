@@ -68,6 +68,12 @@ def _build_claim_dict(claim: Claim) -> dict:
         "interest_base_date": extra.get("interest_base_date"),
         "batch": extra.get("batch"),
         "loan_bank": extra.get("loan_bank"),
+        # 2026-09-04 材料识别新增字段（回填展示：债权人/债权类型/计息方式/是否胜诉）
+        "creditor": extra.get("creditor"),
+        "debt_type": extra.get("debt_type"),
+        "interest_method": extra.get("interest_method"),
+        "judgment_result": extra.get("judgment_result"),
+        "lease_equipment": extra.get("lease_equipment") == "1",
         "mortgage_amount": extra.get("mortgage_amount"),
         "mortgage_rank": extra.get("mortgage_rank"),
         "seizure": extra.get("seizure"),
@@ -110,8 +116,8 @@ def _build_kyb_summary(reg_data: dict) -> dict:
 async def _node2_judicial(claim: Claim) -> dict:
     """节点② 工商/司法风险
 
-    配置企查查 QCC_TOKEN 时优先走企查查（工商登记 + 高危风险因子；股东信息不主动查，
-    复用财产线索功能的工具缓存，省 20 积分/主体），
+    配置企查查 QCC_TOKEN 时优先走企查查（工商登记 + 股东 + 变更 + 只扫命中清单；
+    query_engine_summary 已含股东/变更，2026-09-04 用户确认主动查，三功能共享缓存复用），
     失败/未配置时回退免费源（gsxt 公示系统 + 执行信息公开网），并如实标注来源。
     """
     result: dict = {"type": claim.debtor_type or "enterprise", "source_status": {}}
@@ -128,9 +134,8 @@ async def _node2_judicial(claim: Claim) -> dict:
                 result["source_status"]["qcc"] = "ok"
 
                 shr = q.get("shareholders") or {}
-                # 股东信息仅在已有数据时展示（尽调不主动实查股东，省 20 积分/主体；
-                # 用户先用财产线索功能查询过则免费复用工具缓存）。未查询/未获取时
-                # 不放 shareholders 键，报告不展示股东区块（需要时用财产线索功能）。
+                # 股东信息来自 eng 共享缓存（2026-09-04 尽调主动查，进工具缓存供画像/线索复用）；
+                # 有数据才展示股东区块
                 if shr.get("ok") and shr.get("data"):
                     result["shareholders"] = shr.get("data")
 
@@ -143,11 +148,21 @@ async def _node2_judicial(claim: Claim) -> dict:
                 result["data_as_of"] = qa[:4] + "年" if qa else None
 
                 scan = q.get("risk", {}).get("scan") or {}
-                factors = scan.get("data", {}).get("风险因子扫描") or [] if scan.get("ok") else []
-                risk_factors = [
-                    {"label": f["风险因子"], "count": f.get("条目数") or 0}
-                    for f in factors if (f.get("条目数") or 0) > 0
-                ]
+                # 只扫不钻（2026-09-04）：命中清单 risk.hits（label/count + 缓存已有明细的示例案号，
+                # 零积分）；旧缓存无 hits 时回退从 scan 因子折算，保证兼容
+                hits = q.get("risk", {}).get("hits") or []
+                if hits:
+                    risk_factors = [
+                        {"label": h.get("label") or "", "count": h.get("count") or 0,
+                         **({"sample": h["sample"]} if h.get("sample") else {})}
+                        for h in hits
+                    ]
+                else:
+                    factors = scan.get("data", {}).get("风险因子扫描") or [] if scan.get("ok") else []
+                    risk_factors = [
+                        {"label": f["风险因子"], "count": f.get("条目数") or 0}
+                        for f in factors if (f.get("条目数") or 0) > 0
+                    ]
                 result["risk_factors"] = risk_factors
                 factor_count = {f["label"]: f["count"] for f in risk_factors}
                 result["judicial_risk"] = {
@@ -195,12 +210,42 @@ async def _node3_legal(claim: Claim) -> dict:
     《执行异议复议规定》等），展示"依据《XX法》"字样；无匹配则不输出——
     绝不写"法规依据由系统生成"（易被误读为系统凭空造法）。
     """
-    result = {
-        "documents": {
-            "found": False,
-            "not_found_note": "未检索到相关判决书，本息为估算，建议上传补充材料",
-        },
-    }
+    # 2026-09-05：用户上传过判决书/裁判材料时，不写"未检索到相关判决书"（那条针对企查查检索，
+    # 与用户材料无关，会自相矛盾）；改按用户材料说明
+    extra = {}
+    try:
+        extra = json.loads(claim.extra_fields) if claim.extra_fields else {}
+    except Exception:
+        extra = {}
+    has_user_doc = bool(extra.get("case_number") or extra.get("judgment_result") or claim.source_type == "doc")
+    if has_user_doc:
+        case_no = extra.get("case_number")
+        jr = extra.get("judgment_result")
+        note = []
+        if case_no:
+            note.append(f"已根据您上传的判决书（案号 {case_no}）分析")
+        elif jr:
+            note.append(f"已根据您上传的裁判材料分析（{jr}）")
+        else:
+            note.append("已根据您上传的判决书/裁定书等材料分析")
+        if not extra.get("interest_method"):
+            note.append("材料中未见明确的利息计算条款，如需精确计息可在报告页补充")
+        note_text = "；".join(note)
+        result = {
+            "documents": {
+                "found": True,
+                "items": [{"item": "用户上传判决书/材料", "status": "已采用",
+                           "note": f"案号：{case_no}" if case_no else "已作为本息与案情分析依据"}],
+                "not_found_note": note_text,
+            },
+        }
+    else:
+        result = {
+            "documents": {
+                "found": False,
+                "not_found_note": "未检索到相关判决书，本息为估算，建议上传补充材料",
+            },
+        }
     statutes = _match_statutes(claim)
     if statutes:
         result["statutes"] = statutes  # [{name, doc_no, summary}]
@@ -233,6 +278,7 @@ def _match_statutes(claim: Claim) -> list[dict]:
         extra.get("mortgage_rank") or "",
         extra.get("seizure") or "",
         extra.get("case_cause") or "",
+        extra.get("debt_type") or "",  # 2026-09-04：融资租赁等债权类型参与法规匹配
         "执行异议" if extra.get("seizure") or "执行" in (claim.judicial_status or "") else "",
         "司法拍卖" if "拍卖" in (claim.judicial_status or "") else "",
     ]))
@@ -306,7 +352,34 @@ async def _node4_valuation(claim: Claim) -> dict:
     - 非工业类（住宅/商铺/写字楼等）：维持市场价区间粗估。
     平台边界：只做抵押物评估（处置依据，非债权定价），估值区间+本息合计并列展示，
     不做7折/8折情景表、不算账、不做买入建议。市场价格无法确定，明确标注为粗估。
+    融资租赁债权（2026-09-04 用户确认）：设备充当担保物，视同有抵押物、不做设备估价、
+    不写覆盖率；抵押物区块展示设备清单原文或"设备租赁"。
     """
+    extra = {}
+    try:
+        extra = json.loads(claim.extra_fields) if claim.extra_fields else {}
+    except Exception:
+        extra = {}
+
+    # 融资租赁设备债权：视同有抵押物，但不做设备估价与覆盖率分析
+    if extra.get("lease_equipment") == "1":
+        lease_note = ("本债权为融资租赁（设备租赁）：租赁物（设备）作为担保物视同抵押物，"
+                      "平台暂不对设备估价，也不计算抵押物对债权的覆盖率。"
+                      "回收主要依赖设备处置或承租方继续履约，建议结合设备成新率/二手市场另行评估。")
+        return {
+            "present": True,
+            "lease_equipment": True,
+            "collateral_desc": claim.collateral or "设备租赁",
+            "collateral_type": extra.get("collateral_type") or "设备（租赁物）",
+            "valuation": None,
+            "valuation_method": "融资租赁：不做设备估价",
+            "valuation_notes": [],
+            "coverage_vs_interest": None,
+            "coverage_note": "融资租赁设备债权：不计算覆盖率",
+            "liquidity": lease_note,
+            "note": lease_note,
+        }
+
     if not claim.collateral:
         return {
             "present": False,
@@ -316,12 +389,6 @@ async def _node4_valuation(claim: Claim) -> dict:
         }
 
     from .land_factory_valuation import estimate_land_factory
-
-    extra = {}
-    try:
-        extra = json.loads(claim.extra_fields) if claim.extra_fields else {}
-    except Exception:
-        extra = {}
 
     # 评估报告（2026-09-01 用户规则）：2 年内评估值直接采用；超 2 年走成本法，报告仍展示
     # 信息来自详情页附件（startDD 时随 sourceText 传入，LLM 提取至 extra_fields.valuation_report）
@@ -515,7 +582,13 @@ def _node5_interest(claim: Claim) -> dict:
     # 判决书利率（情况②）
     judgment_rate = extra.get("judgment_rate")
     penalty_per_day = extra.get("penalty_per_day")
-    has_judgment = bool(judgment_rate)
+    # 2026-09-05：用户上传了判决书/裁判材料（有案号/裁判结果/利率）→ 提示语与估算口径随之调整，
+    # 不再写"未检索到判决书"（那是对应企查查扫描，与用户上传材料无关）
+    has_uploaded_judgment = bool(
+        extra.get("case_number") or extra.get("judgment_result") or judgment_rate
+        or (claim.source_type == "doc")
+    )
+    has_judgment = bool(judgment_rate and float(judgment_rate) > 0)
 
     if has_judgment:
         # ② 判决书：起算日（判决书写的计息起始）→ 报告当日，按判决利率
@@ -541,15 +614,41 @@ def _node5_interest(claim: Claim) -> dict:
                     "mode": result.calculation_mode,
                     "items": result.items,
                     "total_cents": result.total_cents,
-                    "basis_note": f"按判决书利率计至 {today.isoformat()}（报告生成当日）",
+                    # 依据用户上传判决书计算（rate 在 items note 中体现）
+                    "basis_note": f"按您上传判决书确定的利率（年 {float(judgment_rate) * 100:g}%）计至 {today.isoformat()}（报告生成当日）",
                     "basis_label": "截止今日",
                     "start_date": start.isoformat(),
                     "end_date": today.isoformat(),
                     "has_judgment": True,
+                    "source_judgment": True,
                     "validation": _interest_validation(principal, result.total_cents - principal),
                 }
             except Exception as e:  # noqa: BLE001
                 logger.warning("judgment interest calc failed: %s", e)
+        else:
+            # 有判决书利率但缺起算日 → 说明情况，给估算口径（不按无信息处理）
+            rate_days_note = f"已识别判决书年利率 {float(judgment_rate) * 100:g}%，但未识别出计息起算日"
+            if known_interest:
+                return {
+                    "mode": "no_info",
+                    "items": [
+                        {"name": "本金", "amount_cents": principal, "note": ""},
+                        {"name": "利息", "amount_cents": known_interest, "note": "判决书载明利息"},
+                    ],
+                    "total_cents": principal + known_interest,
+                    "basis_note": f"{rate_days_note}，暂按判决书载明利息列示；如需精确续算请在报告页补充计息起算日",
+                    "basis_label": "判决书载明",
+                    "has_judgment": True,
+                    "source_judgment": True,
+                    "validation": _interest_validation(principal, known_interest),
+                }
+            return {
+                "mode": "none",
+                "note": f"{rate_days_note}，无法计算截止今日利息",
+                "total_cents": None,
+                "has_judgment": True,
+                "source_judgment": True,
+            }
 
     # ① 有利息截止日 → 截止日利息 + 截止日→当日按 LPR 续算
     cutoff = _parse_date(extra.get("interest_base_date"))
@@ -606,6 +705,26 @@ def _node5_interest(claim: Claim) -> dict:
 
     # ③ 无任何计息信息：直接用录入利息
     total = principal + (known_interest or 0) if known_interest else principal
+    # 2026-09-05：用户上传了判决书但未能识别出利率/起算日 → 明确说明，不再写笼统"无计息信息"
+    if has_uploaded_judgment:
+        return {
+            "mode": "no_info",
+            "items": [
+                {"name": "本金", "amount_cents": principal, "note": ""},
+                {"name": "利息", "amount_cents": known_interest or 0,
+                 "note": "判决书载明利息" if known_interest else ""},
+            ] if known_interest else [{"name": "本金", "amount_cents": principal, "note": ""}],
+            "total_cents": total,
+            "basis_note": ("已识别您上传的判决书（案号 %s），但未识别出明确的利率/计息起算信息，"
+                           "暂按判决书载明利息列示；如需按利率精确续算，请在报告页补充计息条款后重新生成。"
+                           % extra.get("case_number")) if extra.get("case_number")
+                          else "已识别您上传的判决书，但未识别出明确的利率/计息起算信息，暂按 LPR 估算；可在报告页补充判决书计息条款后重新生成",
+            "basis_label": "判决书载明" if extra.get("case_number") else "估算",
+            "end_date": today.isoformat(),
+            "has_judgment": False,
+            "source_judgment": True,
+            "validation": _interest_validation(principal, known_interest),
+        }
     return {
         "mode": "no_info",
         "items": [
@@ -626,6 +745,12 @@ async def _node6_summary(claim: Claim, nodes: dict) -> dict:
 
     平台边界：综合评级只给星（不给文字建议）；不做买入建议/利润测算。
     """
+    lease = False
+    try:
+        _extra = json.loads(claim.extra_fields) if claim.extra_fields else {}
+        lease = _extra.get("lease_equipment") == "1"
+    except Exception:
+        lease = False
     if not settings.deepseek_api_key:
         return _fallback_summary(claim, nodes)
     system = """你是不良资产尽调分析专家。基于提供的尽调数据，生成报告摘要与风控评估。
@@ -642,6 +767,14 @@ async def _node6_summary(claim: Claim, nodes: dict) -> dict:
    ★★★ 覆盖70%~100%（接近覆盖）；★★ 覆盖40%~70%（未覆盖，处置可能须退还多余款项）；
    ★ 覆盖<40%或重大不确定。
 5. 严禁输出：建议买入价、收益率、利润测算、买入决策。"""
+    if lease:
+        # 融资租赁设备债权（2026-09-04 用户确认）：不做设备估价与覆盖率分析，评级改按司法/主体情况
+        system += (
+            "\n6. 本条为融资租赁设备债权：设备（租赁物）充当担保物，平台不做设备估价、不计算覆盖率，"
+            "因此第 3/4 条的覆盖口径与覆盖率评级一律不适用，禁止输出任何覆盖比例与'覆盖/未覆盖'结论；"
+            "评级请综合司法状态（是否胜诉/执行进展）、债务人经营状况、租金回收可能、设备残值可处置性给出，"
+            "并仅在 core_logic 说明评级依据。"
+        )
     user = json.dumps({"claim": _build_claim_dict(claim), "nodes": nodes}, ensure_ascii=False)
     try:
         result = await chat_json(system, user, temperature=0.3)
@@ -662,46 +795,57 @@ def _fallback_summary(claim: Claim, nodes: dict) -> dict:
     """
     principal_wan = (claim.principal_cents or 0) / 100 / 10000
     principal_text = f"{principal_wan:.2f}万元" if claim.principal_cents else "未知"
-    # 按抵押物覆盖情况给星（覆盖率 = 本息 ÷ 抵押物估值）
+    lease = False
+    try:
+        _extra = json.loads(claim.extra_fields) if claim.extra_fields else {}
+        lease = _extra.get("lease_equipment") == "1"
+    except Exception:
+        lease = False
+    # 按抵押物覆盖情况给星（覆盖率 = 本息 ÷ 抵押物估值）；融资租赁设备债权不做覆盖率评级
     rating = "★★★"
     coverage_ratio = None
     covered = None
-    try:
-        val = nodes.get("collateral", {}).get("valuation") or {}
-        coverage = nodes.get("collateral", {}).get("coverage_vs_interest") or {}
-        collateral = coverage.get("collateral_cents") or val.get("reference_cents") or val.get("neutral_cents")
-        total = coverage.get("interest_total_cents")
-        if collateral and total and collateral > 0:
-            ratio = total / collateral  # 本息 ÷ 抵押物
-            coverage_ratio = round(ratio * 100, 1)
-            covered = ratio >= 1.0
-            if ratio >= 1.5:
-                rating = "★★★★★"
-            elif ratio >= 1.0:
-                rating = "★★★★"
-            elif ratio >= 0.7:
-                rating = "★★★"
-            elif ratio >= 0.4:
-                rating = "★★"
-            else:
-                rating = "★"
-    except Exception:
-        pass
+    if not lease:
+        try:
+            val = nodes.get("collateral", {}).get("valuation") or {}
+            coverage = nodes.get("collateral", {}).get("coverage_vs_interest") or {}
+            collateral = coverage.get("collateral_cents") or val.get("reference_cents") or val.get("neutral_cents")
+            total = coverage.get("interest_total_cents")
+            if collateral and total and collateral > 0:
+                ratio = total / collateral  # 本息 ÷ 抵押物
+                coverage_ratio = round(ratio * 100, 1)
+                covered = ratio >= 1.0
+                if ratio >= 1.5:
+                    rating = "★★★★★"
+                elif ratio >= 1.0:
+                    rating = "★★★★"
+                elif ratio >= 0.7:
+                    rating = "★★★"
+                elif ratio >= 0.4:
+                    rating = "★★"
+                else:
+                    rating = "★"
+        except Exception:
+            pass
     logic = [f"债务人：{claim.debtor_name or '未知'}；本金：{principal_text}（详见报告）"]
     risk_items = ["司法状态需人工核实"]
     if coverage_ratio is not None:
         logic.append(f"抵押物对债权本息覆盖比例约 {coverage_ratio}%（本息合计对抵押物估值）")
         if covered is False:
             risk_items.append("未覆盖：本息低于抵押物估值，处置或以物抵债后可能存在退还债务人多余款项的问题")
+    if lease:
+        logic.append("本债权为融资租赁设备债权：设备（租赁物）充当担保物，平台不做设备估价与覆盖率分析")
     return {
         "summary": {
             "rating": rating,
             "core_logic": logic,
         },
         "risk": {
-            "favorable": ["抵押物信息已录入（估值见抵押物分析）"] if claim.collateral else [],
+            "favorable": (["融资租赁设备债权：设备（租赁物）作为担保物视同有抵押物"]
+                          if lease else (["抵押物信息已录入（估值见抵押物分析）"] if claim.collateral else [])),
             "risk": risk_items,
-            "need_manual_verify": ["本息计算基准日", "判决书", "抵押物估值", "抵押物占用/租赁情况"],
+            "need_manual_verify": (["租金支付/逾期记录", "设备现状与成新率", "承租人经营状况"]
+                                   if lease else ["本息计算基准日", "判决书", "抵押物估值", "抵押物占用/租赁情况"]),
         },
     }
 
@@ -749,7 +893,9 @@ async def build_report_content(claim: Claim, progress: NodeProgress) -> dict:
             "principal_text": _cents_to_wan(claim.principal_cents),
             "interest_total_text": _cents_to_wan(nodes.get("interest", {}).get("total_cents")),
             "interest_basis_label": nodes.get("interest", {}).get("basis_label") or "截止今日",
-            "collateral_valuation_text": _format_valuation(nodes.get("collateral", {}).get("valuation")),
+            "collateral_valuation_text": ("设备租赁（不做估价）"
+                                          if nodes.get("collateral", {}).get("lease_equipment")
+                                          else _format_valuation(nodes.get("collateral", {}).get("valuation"))),
             "recovery_cycle_estimate": nodes.get("collateral", {}).get("liquidity") or "待核实",
         },
         "sections": {

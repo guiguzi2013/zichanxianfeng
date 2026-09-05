@@ -17,7 +17,8 @@ if settings.database_url.startswith("sqlite:///./"):
 
 # SQLite 需要 check_same_thread=False 供 FastAPI 多线程使用
 if settings.database_url.startswith("sqlite"):
-    connect_args = {"check_same_thread": False}
+    # busy_timeout：材料识别后台任务与前台请求可能并发写库，等待而非立即报锁
+    connect_args = {"check_same_thread": False, "timeout": 30}
     # SQLite 不会自动创建目录，启动前确保数据目录存在
     # 处理 sqlite:///./data/app.db 或 sqlite:////abs/path 形式
     db_path_str = settings.database_url.replace("sqlite:///", "", 1)

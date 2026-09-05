@@ -1,6 +1,6 @@
 import { Card, Form, Input, Button, Typography, message, Alert } from 'antd'
 import { UserOutlined, LockOutlined, SafetyOutlined } from '@ant-design/icons'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, useLocation, Link } from 'react-router-dom'
 import { authApi } from '../api'
 import { useAuthStore } from '../store/auth'
 
@@ -9,6 +9,7 @@ const { Title, Text } = Typography
 /** 管理后台独立登录入口（/admin-login）：仅管理员/运营编辑可进 */
 export default function AdminLoginPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const setAuth = useAuthStore((s) => s.setAuth)
 
   const onFinish = async (values) => {
@@ -21,7 +22,9 @@ export default function AdminLoginPage() {
       }
       setAuth(resp.data.access_token, user)
       message.success(`欢迎，${user.nickname || user.username}`)
-      navigate('/admin')
+      // 2026-09-05：登录后回到被拦截的后台页面（state.from），否则进后台首页
+      const from = location.state?.from
+      navigate(from && from.startsWith('/admin') ? from : '/admin', { replace: true })
     } catch {
       /* 拦截器已提示 */
     }

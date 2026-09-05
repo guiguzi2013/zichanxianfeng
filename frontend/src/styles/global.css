@@ -24,6 +24,23 @@
 
 * { box-sizing: border-box; }
 
+/* ===== 浏览器自动填充底色覆盖（2026-09-05） =====
+   Chrome/Edge 会给已保存账号的输入框自动加浅蓝底 #e8f0fe（用户反馈"难看灰/蓝底"）。
+   用 -webkit-autofill 伪类强制回白，并延长填充停留，避免文字跳动。 */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+select:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 1000px #ffffff inset !important;
+  box-shadow: 0 0 0 1000px #ffffff inset !important;
+  -webkit-text-fill-color: var(--text-main, #1F2D3D) !important;
+  caret-color: var(--text-main, #1F2D3D) !important;
+  transition: background-color 9999s ease-out 0s;
+}
+
 body {
   margin: 0;
   font-family: -apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;

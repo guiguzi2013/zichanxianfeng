@@ -12,14 +12,12 @@ export default function AppHeader() {
   const { token, user, logout } = useAuthStore()
   const [logoError, setLogoError] = useState(false)
 
-  // 前台导航（管理后台不在此显示，走独立 /admin-login）
-  // 去掉「首页」「公告」两个无用菜单（用户确认）
+  // 前台导航（2026-09-04 用户确认排序）：1债权尽调 2债务人画像 3土地厂房估价 4财产线索
   const menuItems = [
-    { key: '/debts', label: '债权信息' },
-    { key: '/property-clues', label: '财产线索' },
-    { key: '/upload', label: '智能尽调' },
+    { key: '/upload', label: '债权尽调' },
+    { key: '/debtor-profile', label: '债务人画像' },
     { key: '/valuation', label: '土地厂房估价' },
-    { key: '/valuation/commercial', label: '商业房产估价' },
+    { key: '/property-clues', label: '财产线索' },
   ]
 
   // 用户下拉（登录后）：
@@ -112,7 +110,7 @@ export default function AppHeader() {
             </div>
           </Dropdown>
         ) : (
-          <Button type="primary" onClick={() => navigate('/login')}>登录</Button>
+          <Button type="primary" onClick={() => navigate('/login', { state: { from: window.location.pathname + window.location.search } })}>登录</Button>
         )}
       </div>
     </Header>

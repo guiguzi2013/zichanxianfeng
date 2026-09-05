@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import admin, auth, activity, claims, clues, compare, dashboard, feed, feedback, knowledge, land_price, notices, qcc, reports, tasks, valuation
+from .api import admin, auth, activity, claims, clues, compare, dashboard, debtor_profile, feed, feedback, knowledge, land_price, notices, qcc, reports, tasks, valuation
 from .database import Base, engine
 from . import models  # noqa: F401  确保模型注册
 
@@ -103,6 +103,7 @@ app.include_router(knowledge.router, prefix="/api")
 app.include_router(valuation.router, prefix="/api")
 app.include_router(activity.router, prefix="/api")
 app.include_router(land_price.router, prefix="/api")
+app.include_router(debtor_profile.router, prefix="/api")
 
 # ---- 单进程模式：后端托管前端构建产物（若存在）----
 if FRONTEND_DIST.exists():

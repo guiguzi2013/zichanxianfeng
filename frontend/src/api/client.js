@@ -21,7 +21,15 @@ client.interceptors.response.use(
       return Promise.reject(error)
     }
     const detail = error.response?.data?.detail
-    const msg = typeof detail === 'string' ? detail : detail?.message || error.message || '请求失败'
+    let msg = typeof detail === 'string' ? detail : detail?.message
+    // FastAPI 422 校验错误：detail 是数组，提取第一条人性化信息
+    if (!msg && Array.isArray(detail) && detail.length > 0) {
+      const d = detail[0]
+      const loc = Array.isArray(d.loc) ? d.loc.filter((x) => x !== 'body').join(' → ') : ''
+      msg = d.msg === 'Field required' ? `缺少必要内容：${loc || '请检查上传内容'}` : (loc ? `${loc}：${d.msg}` : d.msg)
+    }
+    if (!msg && status === 422) msg = '提交内容格式有误，请检查后重试（如页面较旧请强制刷新 Ctrl+F5）'
+    if (!msg) msg = error.message || '请求失败'
     message.error(msg)
     return Promise.reject(error)
   }

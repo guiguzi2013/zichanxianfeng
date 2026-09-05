@@ -20,10 +20,19 @@ export default function MobileTabbar() {
     || (key === '/property-clues' && location.pathname.startsWith('/property-clues'))
     || (key === '/tasks' && location.pathname.startsWith('/tasks'))
 
+  // 2026-09-05：未登录点「我的」→ 登录页，登录成功后回到"我的"(/tasks)
+  const goTab = (t) => {
+    if (t.key === '/login') {
+      navigate('/login', { state: { from: '/tasks' } })
+      return
+    }
+    navigate(t.key)
+  }
+
   return (
     <div className="mobile-tabbar">
       {tabs.map((t) => (
-        <div key={t.label} className={`tab-item ${isActive(t.key) ? 'active' : ''}`} onClick={() => navigate(t.key)}>
+        <div key={t.label} className={`tab-item ${isActive(t.key) ? 'active' : ''}`} onClick={() => goTab(t)}>
           {t.icon}
           {t.label}
         </div>

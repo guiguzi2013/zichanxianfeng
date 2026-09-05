@@ -9,13 +9,23 @@ export const authApi = {
 
 export const claimApi = {
   importText: (text) => client.post('/claims/import-text', { text }),
-  importLink: (url) => client.post('/claims/import-link', { url }),
   importPackage: (headers, rows, title, sourceUrl) => client.post('/claims/import-package', { headers, rows, title, source_url: sourceUrl }),
   importExcel: (file) => {
     const form = new FormData()
     form.append('file', file)
     return client.post('/claims/import-excel', form, { timeout: 180000 })
   },
+  importDoc: (files, onUploadProgress) => {
+    // Word/PDF/TXT/图片 判决书等材料（可多份合并）→ 提交识别任务，返回 {job_id}；进度用 docJobStatus 轮询
+    // onUploadProgress: 上传进度回调（大文件/慢带宽时前端展示真实上传百分比，2026-09-05 用户确认 A 项）
+    const form = new FormData()
+    ;(files || []).forEach((f) => form.append('files', f))
+    return client.post('/claims/import-doc', form, {
+      timeout: 600000, // 上传阶段仅算传输时间，大文件慢带宽需放宽
+      onUploadProgress: onUploadProgress,
+    })
+  },
+  docJobStatus: (jobId) => client.get(`/claims/import-doc/${jobId}/status`, { timeout: 30000 }),
   update: (id, data) => client.put(`/claims/${id}`, data),
   list: () => client.get('/claims'),
   checkExisted: (debtorNames) => client.post('/claims/check-existed', { debtor_names: debtorNames }),
@@ -132,4 +142,12 @@ export const knowledgeApi = {
 
 export const valuationApi = {
   estimate: (data) => client.post('/valuation/estimate', data, { timeout: 60000 }),
+}
+
+// 债务人画像（2026-09-04）：企业速览查询 + 报告查看/下载
+export const debtorProfileApi = {
+  // 首次查询需逐维度采集，可能 1-3 分钟 → 超时放宽到 10 分钟
+  query: (company) => client.post('/debtor-profile/query', { company }, { timeout: 600000 }),
+  detail: (id) => client.get(`/debtor-profile/${id}`),
+  downloadUrl: (id) => `/debtor-profile/${id}/download`,
 }

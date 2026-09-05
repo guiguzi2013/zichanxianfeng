@@ -19,7 +19,8 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
-    llm_timeout_seconds: int = 60
+    # 材料识别/长文本任务（多文件合并可达数万字符）需更长超时，避免 60s 掐断+重试造成"卡死"观感
+    llm_timeout_seconds: int = 300
     llm_max_retries: int = 1
     # mock 模式：无 API Key 时用预设数据跑通全流程（验收/演示用），生产关闭
     # 默认 True：没有 .env 时开箱即用；配置了 DEEPSEEK_API_KEY 后可在 .env 设 LLM_MOCK=false 走真实模型

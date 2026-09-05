@@ -176,11 +176,7 @@ export default function AssetDetailPage() {
         {/* 左栏：基本信息 + 招商原文 */}
         <Col xs={24} lg={15}>
           <Card title="基本信息" style={{ marginBottom: 16 }}>
-            {/* 阿里资产：详情字段需登录才能查看（2026-09-01；捡漏不显示——2026-09-02 用户圈1要求删除） */}
-            {!isBargain && item.source === '阿里资产' && (
-              <Alert type="info" showIcon style={{ marginBottom: 12 }}
-                message="阿里资产详情需登录查看，当前展示列表公开信息（起拍价/状态/标题提取字段）。完整债权金额、债务人、抵押物明细请查看原始公告。" />
-            )}
+            {/* 阿里资产登录提示已删除（2026-09-05 用户两次圈1：登录后仍是列表字段，此提示像替抓不到找借口，无信息价值） */}
             {isNotice ? (
               /* 债权公告（智收云索引·报纸公告）——仿智收云公告详情页格式（2026-09-02）
                  指标卡(债权金额/本金/户数) + 来源(报纸/日期/类型) + 债权方 + 债务人 + 正文 + 链接跳转 */
@@ -289,7 +285,7 @@ export default function AssetDetailPage() {
                 <Descriptions.Item label="地区">{detail.region || '未披露'}</Descriptions.Item>
                 <Descriptions.Item label="处置方">{detail.transferor || '未披露'}</Descriptions.Item>
                 <Descriptions.Item label="拍卖时间">{detail.auction_time || '未披露'}</Descriptions.Item>
-                <Descriptions.Item label="折扣">{detail.discount || '未披露'}</Descriptions.Item>
+                <Descriptions.Item label="折扣">{detail.discount || detail.discount_rate || '未披露'}</Descriptions.Item>
                 <Descriptions.Item label="标的描述" span={2}>
                   {detail.collateral_desc || detail.short_title || '未披露'}
                 </Descriptions.Item>

@@ -844,34 +844,40 @@ def sync_taobao_credit_to_feed() -> dict:
     bargain: list[dict] = []
     try:
         featured_raw = fetch_taobao_credit_mtop()  # 债权专区（确定信息源）
-        bargain = fetch_taobao_bargain_mtop()  # 破产专区 mtop 接口
+        # 2026-09-05 用户确认（B）：捡漏只保留京东来源；阿里捡漏整类放弃——
+        # 阿里破产专区多为"一句话/打码"条目（详情无正文），宁缺毋滥，不再抓取
+        # bargain = fetch_taobao_bargain_mtop()  # 已停用
     except Exception as e:  # noqa: BLE001
         logger.exception("阿里资产同步失败: %s", e)
         featured_raw = []
     # 自动分类：起拍价 < 10000 元的极低标的自动归捡漏（用户规则 2026-08-31）
+    # 2026-09-05 停用降级：捡漏只要京东，阿里低价条目不再降级（信息普遍不全，直接按精选门槛过滤）
     featured: list[dict] = []
     for it in featured_raw:
-        price = (it.get("detail") or {}).get("_price_yuan") or 0
         d = it["detail"]
         d.pop("_price_yuan", None)
-        if 0 < price < 10000:
-            d["bargain_note"] = "低价捡漏：起拍价低于 1 万元，适合个人投资者低价参与；请自行核实权属、占用、税费等风险。"
-            it["tags"] = [t for t in (it.get("tags") or []) if t not in ("债权转让", "阿里资产")] + ["低价捡漏", "阿里资产"]
-            bargain.append(it)
-        else:
-            featured.append(it)
+        featured.append(it)
 
     db = SessionLocal()
+    dropped = 0
     try:
+        from .quality import is_complete
         for it in featured:
+            if not is_complete(it, section="featured"):
+                dropped += 1
+                continue
             _upsert_feed(db, it, section="featured")
         for it in bargain:
+            if not is_complete(it, section="bargain"):
+                dropped += 1
+                continue
             _upsert_feed(db, it, section="bargain")
         db.commit()
         feat_total = db.query(FeedItem).filter(FeedItem.section == "featured").count()
         bargain_total = db.query(FeedItem).filter(FeedItem.section == "bargain").count()
     finally:
         db.close()
-    logger.info("阿里资产同步完成: 精选 %d 条, 捡漏 %d 条", len(featured), len(bargain))
+    logger.info("阿里资产同步完成: 精选 %d 条, 捡漏 %d 条, 因信息不全放弃 %d 条", len(featured), len(bargain), dropped)
     return {"fetched_featured": len(featured), "fetched_bargain": len(bargain),
+            "dropped_incomplete": dropped,
             "featured_total": feat_total, "bargain_total": bargain_total}

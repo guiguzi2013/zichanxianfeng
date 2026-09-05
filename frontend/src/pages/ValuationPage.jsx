@@ -38,7 +38,7 @@ export default function ValuationPage({ mode = 'industrial' }) {
         content: '发起估价将保存估价记录，请先登录。（未登录可浏览估价页面与说明）',
         okText: '去登录',
         cancelText: '取消',
-        onOk: () => navigate('/login'),
+        onOk: () => navigate('/login', { state: { from: window.location.pathname + window.location.search } }),
       })
       return
     }

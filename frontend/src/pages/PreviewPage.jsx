@@ -34,7 +34,8 @@ export default function PreviewPage() {
 
   // 重复债务人判定：dedup 信息来自导入接口
   const batchDupIds = new Set((dedup?.batch_dups || []).map((d) => d.id))          // 同批重复（后出现的，只能勾第一条）
-  const existingDupIds = new Set((dedup?.existing_dups || []).map((d) => d.id))    // 与历史/报告重复
+  // 与历史重复：仅当历史同名债权已发起过尽调(有任务/报告)才拦；仅导入过未尽调 → 提示但可正常勾选（2026-09-05）
+  const existingDupIds = new Set((dedup?.existing_dups || []).filter((d) => d.started).map((d) => d.id))
   const dupInfoMap = {}
   ;(dedup?.batch_dups || []).forEach((d) => { dupInfoMap[d.id] = `与同批「${d.dup_with}」重复` })
   ;(dedup?.existing_dups || []).forEach((d) => { dupInfoMap[d.id] = `与您历史记录（${d.first_source}）重复，建议先去「我的报告」查看` })
@@ -215,7 +216,6 @@ export default function PreviewPage() {
   }
 
   const selectedCount = selected.length
-  const estPoints = selectedCount * 100
 
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 16px' }}>
@@ -267,7 +267,6 @@ export default function PreviewPage() {
         >
           <Space size="large" align="center">
             <Text strong>已选 {selectedCount}/5 条</Text>
-            <Text type="secondary">预估 {estPoints} 积分</Text>
           </Space>
           <Space>
             <Button onClick={saveOnly} loading={saving} disabled={selectedCount === 0}>
@@ -301,8 +300,7 @@ export default function PreviewPage() {
             description={<ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{dupSelectedNames.map((n, i) => <li key={i}>{n}</li>)}</ul>}
           />
         )}
-        <p>将消耗预估 <Text strong>{estPoints}</Text> 积分（一期仅展示，不真实扣费）。</p>
-        <p>尽调将依次执行：信息提取 → 工商/司法查询 → 法律检索 → 抵押物估值 → 本息计算 → 综合分析。</p>
+        <p>尽调将依次执行：信息提取 → 工商/司法查询 → 法律检索 → 抵押物分析 → 本息计算 → 综合分析。</p>
       </Modal>
 
       {/* 编辑弹窗 */}

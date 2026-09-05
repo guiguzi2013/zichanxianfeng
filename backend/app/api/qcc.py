@@ -3,13 +3,16 @@
 前端 /api/qcc/query -> 本服务 -> 企查查 Agent MCP（无需独立 node 服务）
 - 缓存：同一企业 **1 年**内重复查询直接返回缓存（零调用、零积分），所有用户共享；
   有补充按补充当日续 1 年；无补充满 1 年强制更新（2026-08-31 用户确认）
-- 流程：工商核心工具 + 35 维风险扫描 + 有记录维度明细
+- 流程：工商核心工具 + 35 维风险扫描（明细仅钻取型工作流按命中调用）
 - 更名处理：财产线索查询按 USCC 优先 → 名称比对 → get_company_by_query 定位现名
 - **先扫后钻铁律（2026-08-31 用户强调，全平台适用）**：任何外部数据接口一律
   先低成本概览/扫描（如 get_company_risk_scan）拿到命中清单，只对命中且有价值的
   维度钻取明细工具；禁止无差别全量调用。配套：工具级共享缓存（同主体同工具
   1 年内只实查一次）、失败不缓存（防投毒）、查无此名负缓存、大额消耗先确认预算。
   未来接入其他 API 同样遵循此原则。
+- **只扫不钻（2026-09-04 用户拍板）**：债权尽调、债务人画像两类工作流只调 risk_scan
+  （命中维度/条数进报告概要 risk.hits），不主动钻明细工具；明细工具仅在「财产线索/深挖」
+  等钻取型工作流按命中调用。案号/示例只复用共享缓存已有的明细结果（零积分）。
 """
 import asyncio
 import json
@@ -28,8 +31,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["qcc-demo"])
 
-# 企查查 MCP 凭证：优先 .env 的 QCC_TOKEN，空则回退旧 token
-# 2026-09-02 用户换新 token（积分更多）：MfGkGeWEtgQLxS7J43UwHW3fWtElI10hhnEPzo4NySnm3LtX
+# 企查查 MCP 凭证：优先 .env 的 QCC_TOKEN（2026-09-04 用户换新 key），空则回退下方默认
 from ..config import get_settings  # noqa: E402
 
 _QCC_SETTINGS = get_settings()
@@ -57,17 +59,24 @@ COMPANY_TOOLS = [
 ]
 
 
-# ================= 自研三大工作流工具链（2026-09-01 用户确认） =================
+# ================= 自研工作流工具链（2026-09-01 用户确认，09-04 只扫不钻） =================
 # 官方 SKILL(企业画像速览/诉讼风险评估/债务清偿能力评估)是全量豪华版太贵(全钻 91-211 积分)，
 # 自研精简版只调需要的接口；多工作流共享工具级缓存(tool:{tool}:{company})不重复扣费。
 # 单价：1元=10积分；同一主体月封顶 100 积分=10 元。
+# 只扫不钻（2026-09-04 用户拍板）：①尽调/④画像 = 只调 risk_scan（risk.hits 命中清单，
+# 明细不主动钻）；②财产线索/③深挖 = 先扫后钻（命中才钻，供案号/详情）。
 
-# --- ① 债权尽调工作流（≈2-4 元）：工商 + 涉案(案号/简述) ---
-# 涉案"只要案号+简述" → get_case_filing_info(立案信息:案号/案由/立案日期/原被告, 3积分) 最契合
+# --- ① 债权尽调工作流（≈4-6 元一次性含股东+变更，三功能共享缓存复用）---
+# 司法风险 = 只扫不钻（2026-09-04）：risk_scan 命中清单进报告；要案号/明细走财产线索/深挖
 DD_BASE_TOOLS = [
     ("get_company_registration_info", "工商登记", 3),
+    # 2026-09-04 用户确认：尽调主动查股东+变更，数据进共享缓存 → 债务人画像/财产线索复用，
+    # 同一企业三功能总成本 ≈ 一次查透
+    ("get_shareholder_info", "股东信息", 20),
+    ("get_change_records", "变更记录(法人/股东/注册资本变动轨迹)", 5),
 ]
-# 尽调的高危司法因子（先扫后钻，命中才钻；各 3 积分）
+# 尽调的高危司法因子名册（2026-09-04 只扫不钻后不再钻取；保留作工具清单/缓存审计参考，
+# 明细展示改由 risk.hits 命中清单 + 复用已有缓存示例，不再主动调用）
 DD_RISK_TOOLS = {
     "get_case_filing_info": "立案信息",          # 案号/案由（涉案简述核心）
     "get_judicial_documents": "裁判文书",        # 案由/裁判结果/涉案金额
@@ -85,24 +94,10 @@ CLUES_COMPANY_TOOLS = [
     ("get_external_investments", "对外投资", 5),
     ("get_branches", "分支机构", 5),
 ]
-# 知产（可拍卖变现，各 1 积分）
-CLUES_IPR_TOOLS = [
-    ("get_patent_info", "专利", 1),
-    ("get_trademark_info", "商标", 1),
-    ("get_software_copyright_info", "软件著作权", 1),
-    ("get_copyright_work_info", "作品著作权", 1),
-    ("get_integrated_circuit_layout", "集成电路布图", 1),
-    ("get_ipr_pledge", "知产出质", 1),
-]
-# 权益类可变现资产（无专门矿权/林权接口，用行政许可/资质/产权交易/土地/租赁替代）
-CLUES_ASSET_TOOLS = [
-    ("get_administrative_license", "行政许可(矿权/林权/经营权等登记)", 3),
-    ("get_qualifications", "资质证书", 1),
-    ("get_property_rights_transaction", "产权交易挂牌", 3),
-    ("get_land_grant_info", "土地出让", 3),
-    ("get_land_transfer_info", "土地转让", 3),
-    ("get_financing_lease_info", "融资租赁", 5),
-]
+# 2026-09-04 审计：企查查 MCP(company/risk 两路 tools/list)不提供以下接口，
+# 原 CLUES_IPR_TOOLS(专利/商标/软著/版权/IC/知产出质) 与 CLUES_ASSET_TOOLS
+# (行政许可/资质/产权交易/土地出让/土地转让/融资租赁) 全部移除——此前一直在无效调用(0 产出)。
+# 如企查查后续开放知产/资质类接口再补回。
 # 风险路由财产工具（抵押/拍卖，risk_mcp）
 RISK_PROPERTY_TOOLS = [
     ("get_chattel_mortgage_info", "动产抵押", 3),
@@ -121,6 +116,17 @@ CLUES_RISK_TOOLS = {
     "get_equity_freeze": "股权冻结",
     "get_bankruptcy_reorganization": "破产重整",
     "get_valuation_inquiry": "询价评估(资产)",
+    # 2026-09-04 实测补充（先扫后钻，命中才钻）：
+    "get_court_notice": "法院公告(涉诉/失联信号)",
+    "get_service_notice": "送达公告(逃避送达/失联)",
+    "get_public_exhortation": "公示催告",
+    "get_service_announcement": "劳动仲裁(欠薪/劳资纠纷)",
+    "get_default_info": "违约事项",
+    "get_disciplinary_list": "惩戒名单",
+    "get_liquidation_info": "清算信息",
+    "get_exit_restriction": "限制出境",
+    "get_tax_abnormal": "税务非正常户",
+    "get_tax_arrears_notice": "欠税公告",
 }
 
 # --- ③ 深挖工作流（≈6-12 元）：关联企业+财产转移痕迹+隐藏实控人+实缴 ---
@@ -129,12 +135,10 @@ DEEP_COMPANY_TOOLS = [
     ("get_shareholder_info", "股东信息", 20),
     ("get_actual_controller", "实际控制人", 5),
     ("get_beneficial_owners", "受益所有人(隐藏实控人)", 5),
-    ("get_historical_shareholders", "历史股东(隐藏实控人/退出痕迹)", 20),
     ("get_change_records", "变更记录(股权变动轨迹)", 5),
     ("get_annual_reports", "企业年报(实缴/股东变动)", 3),
     ("get_financial_data", "财务数据(实缴/负债)", 3),
     ("get_external_investments", "对外投资", 5),
-    ("get_historical_investments", "历史对外投资(退出=转移痕迹)", 5),
     ("get_tax_invoice_info", "发票信息(经营活跃)", 3),
 ]
 # 深挖司法/资产因子（有记录才拉明细；动产/土地抵押、司法拍卖已在 clues 基底中）
@@ -310,22 +314,13 @@ async def query_property_clues(company: str) -> dict:
         for tool, label, _price in CLUES_COMPANY_TOOLS[1:]:
             r = await _call_company_tool(client, company_mcp, tool, search_name)
             biz[tool] = {"label": label, **r}
-        # 知产（可拍卖变现，各 1 积分）
-        for tool, label, _price in CLUES_IPR_TOOLS:
-            r = await _call_company_tool(client, company_mcp, tool, search_name)
-            biz[tool] = {"label": label, **r}
-        # 权益类可变现资产（行政许可/资质/产权交易/土地/租赁）
-        for tool, label, _price in CLUES_ASSET_TOOLS:
-            r = await _call_company_tool(client, company_mcp, tool, search_name)
+        # 风险抵押/拍卖财产工具：动产抵押/土地抵押/司法拍卖
+        for tool, label, _price in RISK_PROPERTY_TOOLS:
+            r = await _call_risk_tool(client, risk_mcp, tool, search_name)
             biz[tool] = {"label": label, **r}
 
         # 风险扫描（先扫后钻分诊）
         scan = await _call_risk_tool(client, risk_mcp, "get_company_risk_scan", search_name)
-
-        # 风险路由的财产工具：动产抵押/土地抵押/司法拍卖
-        for tool, label, _price in RISK_PROPERTY_TOOLS:
-            r = await _call_risk_tool(client, risk_mcp, tool, search_name)
-            biz[tool] = {"label": label, **r}
 
         # 涉案明细（先扫后钻）：只钻 CLUES_RISK_TOOLS 中的命中维度
         # 重点：裁判文书→识别企业作为原告可能胜诉产生的未来债权；财产悬赏→未履行金额
@@ -436,25 +431,72 @@ async def query_deep_investigation(company: str) -> dict:
     return result
 
 
-async def query_engine_summary(company: str) -> dict:
-    """① 债权尽调工作流（2026-09-01 用户确认）：债务人基本信息 + 涉案情况(案号/简述即可)
+# ================= ④ 债务人画像工作流（2026-09-04 用户确认新增） =================
+# 定位：输入债务人企业 → 出"XXX企业速览"PDF。所有工具走共享缓存——尽调/财产线索查过的
+# 维度零新增积分；反之画像查全后，对该企业尽调也基本零新增。新企业首次≈股东20+实控/受益/主要
+# 人员/变更/投资/分支/年报/财务 ≈ 40-50 积分(4-5元) + scan 5 分（司法只扫不钻），月封顶100积分。
+PROFILE_BASE_TOOLS = [
+    ("get_company_registration_info", "工商登记", 3),
+    ("get_shareholder_info", "股东信息", 20),
+    ("get_actual_controller", "实际控制人", 5),
+    ("get_beneficial_owners", "受益所有人", 5),
+    ("get_key_personnel", "主要人员", 3),
+    ("get_change_records", "变更记录", 5),
+    ("get_external_investments", "对外投资", 5),
+    ("get_branches", "分支机构", 5),
+    ("get_annual_reports", "企业年报", 3),
+    ("get_financial_data", "财务数据", 3),
+]
+PROFILE_QUAL_TOOLS = []  # 2026-09-04 审计：MCP 无 行政许可/资质 接口，移除(原含 get_administrative_license/get_qualifications)
+# 画像司法因子名册（2026-09-04 只扫不钻后不再钻取；保留作工具清单/缓存审计参考，
+# 明细展示改由 risk.hits 命中清单 + 复用已有缓存示例）
+# 2026-09-04 实测补充（蓝图无记录亦接口有效，返回文案确认真实库）：
+#   court_notice=法院公告 / service_notice=送达公告 / public_exhortation=公示催告 /
+#   service_announcement=劳动仲裁(名字与内容不符!) / default_info=违约事项 / disciplinary_list=惩戒名单
+PROFILE_RISK_TOOLS = {
+    "get_dishonest_info": "失信被执行人",
+    "get_judgment_debtor_info": "被执行人",
+    "get_high_consumption_restriction": "限制高消费",
+    "get_terminated_cases": "终本案件",
+    "get_business_exception": "经营异常",
+    "get_administrative_penalty": "行政处罚",
+    "get_serious_violation": "严重违法失信",
+    "get_equity_freeze": "股权冻结",
+    "get_equity_pledge_info": "股权出质",
+    "get_case_filing_info": "立案信息",
+    "get_judicial_documents": "裁判文书",
+    "get_hearing_notice": "开庭公告",
+    "get_bankruptcy_reorganization": "破产重整",
+    "get_court_notice": "法院公告",
+    "get_service_notice": "送达公告",
+    "get_public_exhortation": "公示催告",
+    "get_service_announcement": "劳动仲裁",
+    "get_default_info": "违约事项",
+    "get_disciplinary_list": "惩戒名单",
+    "get_liquidation_info": "清算信息",
+    "get_exit_restriction": "限制出境",
+    "get_tax_abnormal": "税务非正常户",
+    "get_tax_arrears_notice": "欠税公告",
+    "get_stock_pledge_info": "股权质押",
+    "get_guarantee_info": "对外担保",
+    "get_chattel_mortgage_info": "动产抵押",
+    "get_land_mortgage_info": "土地抵押",
+}
 
-    工具链（DD_BASE_TOOLS + DD_RISK_TOOLS）：
-    - 工商登记(3) 做主体核验
-    - risk_scan(5) 先扫分诊 → 命中才钻 立案信息(案号/案由/原被告=涉案简述核心)/裁判文书/被执行/失信/限高/终本/股权冻结(各3)
-    股东信息不主动实查（20 积分/次，全站最贵）：仅在已有工具级共享缓存时附带
-    （用户先用了财产线索功能则免费复用），未缓存则不查——需要股东信息时由
-    财产线索功能触发（先扫后钻铁律，2026-08-31 用户确认）。
-    ≈ 2-4 元/主体；同一主体月封顶 100 积分=10 元。
+
+async def query_debtor_profile(company: str) -> dict:
+    """④ 债务人画像工作流（2026-09-04）：全维度企业速览数据（供 PDF 报告）
+
+    双向复用（用户 2026-09-04 确认）：本工作流与 尽调/财产线索/深挖 共享工具级缓存——
+    先尽调后画像 / 先画像后尽调，同一企业维度只实查一次，后续功能零新增积分。
+    更名处理：同 clues（工商现名比对 → 用现名查其余维度）。
+    司法风险 = 只扫不钻（2026-09-04 用户拍板）：risk_scan 命中清单（hits）+ 缓存已有明细的
+    示例（零积分）；不主动钻取明细工具，避免无谓积分。
+    返回结构 {company, search_name, renamed, biz{tool:{label,data}}, risk{scan,hits},
+    queried_at}；biz/risk 为 PDF 渲染与摘要的数据源。
     """
-    cached = cache_get(f"eng:{company}")
+    cached = cache_get(f"profile:{company}")
     if cached:
-        # 缓存命中：若工具缓存已有股东信息（用户先用了财产线索功能），合并进结果，
-        # 让"先财产线索、后尽调"也能免费复用，不额外扣积分
-        if not (cached.get("shareholders") or {}).get("ok"):
-            shr = _tool_cache_get("get_shareholder_info", company)
-            if shr is not None:
-                cached["shareholders"] = shr
         return cached
     async with httpx.AsyncClient() as client:
         company_mcp = McpClient("/mcp/company/stream")
@@ -462,28 +504,94 @@ async def query_engine_summary(company: str) -> dict:
         await asyncio.gather(company_mcp.init(client), risk_mcp.init(client))
 
         reg = await _call_company_tool(client, company_mcp, "get_company_registration_info", company)
+        search_name = company
+        renamed: dict | None = None
+        reg_ok = reg.get("ok") and isinstance(reg.get("data"), dict)
+        if reg_ok and reg["data"].get("企业名称") and reg["data"]["企业名称"] != company:
+            search_name = reg["data"]["企业名称"]
+            renamed = {"old_name": company, "new_name": search_name}
+        elif not reg_ok or not (reg.get("data") or {}).get("企业名称"):
+            fuzzy = await _call_company_tool(client, company_mcp, "get_company_by_query", company)
+            candidate = _extract_company_name(fuzzy)
+            if candidate and candidate != company:
+                search_name = candidate
+                renamed = {"old_name": company, "new_name": search_name}
+                reg = await _call_company_tool(client, company_mcp, "get_company_registration_info", search_name)
+
+        biz: dict = {"get_company_registration_info": {"label": "工商登记", **reg}}
+        # 2026-09-04：基础工具与风险扫描 并行调用（首次查询降到几十秒）
+        jobs = []
+        job_meta = []
+        for tool, label, _p in PROFILE_BASE_TOOLS[1:]:
+            jobs.append(_call_company_tool(client, company_mcp, tool, search_name))
+            job_meta.append((tool, label, "company"))
+        jobs.append(_call_risk_tool(client, risk_mcp, "get_company_risk_scan", search_name))
+        job_meta.append(("__scan__", "", "risk"))
+        results = await asyncio.gather(*jobs, return_exceptions=True)
+
+        for (tool, label, _kind), r in zip(job_meta, results):
+            if isinstance(r, Exception):
+                biz[tool] = {"label": label, "ok": False, "error": str(r)[:120]}
+                continue
+            if tool == "__scan__":
+                continue
+            biz[tool] = {"label": label, **r}
+        scan = results[-1] if not isinstance(results[-1], Exception) else {"ok": False, "error": str(results[-1])[:120]}
+        # 只扫不钻（2026-09-04）：命中清单来自 scan；sample 仅复用已有缓存（零积分）
+        hits = _scan_hits(scan, search_name)
+
+    result = {
+        "company": company,
+        "search_name": search_name,
+        "renamed": renamed,
+        "biz": biz,
+        "risk": {"scan": scan, "hits": hits},
+    }
+    if biz.get("get_company_registration_info", {}).get("ok") or scan.get("ok"):
+        cache_set(f"profile:{company}", result)
+        if renamed:
+            result["company"] = search_name
+            cache_set(f"profile:{search_name}", result)
+    else:
+        neg_cache_set(company)
+    return result
+
+
+async def query_engine_summary(company: str) -> dict:
+    """① 债权尽调工作流（2026-09-01 用户确认，2026-09-04 只扫不钻）：债务人基本信息 + 股东/变更 + 涉案
+
+    工具链（DD_BASE_TOOLS + risk_scan）：
+    - 工商登记(3) 主体核验 + 股东信息(20) + 变更记录(5) —— 用户 2026-09-04 确认主动查，
+      数据进共享工具缓存，债务人画像/财产线索直接复用（三功能同企业≈一次查透）
+    - risk_scan(5) 先扫分诊 —— 只扫不钻（2026-09-04 用户拍板）：概要展示命中维度/条数
+      （hits），不主动调用各明细工具；案号示例仅当明细工具结果已在共享缓存时附带（零积分）。
+      需要明细/案号的完整场景走「财产线索/深挖」（先扫后钻）。
+    同一主体月封顶 100 积分=10 元；工具级缓存 1 年复用（后续功能零新增）。
+    """
+    cached = cache_get(f"eng:{company}")
+    if cached:
+        return cached
+    async with httpx.AsyncClient() as client:
+        company_mcp = McpClient("/mcp/company/stream")
+        risk_mcp = McpClient("/mcp/risk/stream")
+        await asyncio.gather(company_mcp.init(client), risk_mcp.init(client))
+
+        # 工商/股东/变更（2026-09-04：股东与变更主动查，供画像/线索复用）
+        reg = await _call_company_tool(client, company_mcp, "get_company_registration_info", company)
+        shr = await _call_company_tool(client, company_mcp, "get_shareholder_info", company)
+        chg = await _call_company_tool(client, company_mcp, "get_change_records", company)
         scan = await _call_risk_tool(client, risk_mcp, "get_company_risk_scan", company)
 
-        # 股东信息：仅复用已有工具级缓存（财产线索功能查过才有），不主动实查省 20 积分
-        shr = _tool_cache_get("get_shareholder_info", company)
-        if shr is None:
-            shr = {"ok": False, "note": "股东信息未查询（可在财产线索功能查询）"}
+        # 只扫不钻（2026-09-04）：命中清单来自 scan；sample 仅复用已有缓存（零积分）
+        hits = _scan_hits(scan, company)
 
-        # 涉案明细（先扫后钻）：只钻 DD_RISK_TOOLS 命中维度（案号/案由/简述）
-        details: dict = {}
-        if scan.get("ok") and isinstance(scan.get("data"), dict):
-            for f in scan["data"].get("风险因子扫描") or []:
-                t = f.get("明细工具")
-                if (f.get("条目数") or 0) > 0 and t in DD_RISK_TOOLS:
-                    r = await _call_risk_tool(client, risk_mcp, t, company)
-                    details[t] = {
-                        "label": DD_RISK_TOOLS[t],
-                        "factor": f["风险因子"],
-                        "count": f["条目数"],
-                        **r,
-                    }
-
-    result = {"company": company, "reg": reg, "shareholders": shr, "risk": {"scan": scan, "details": details}}
+    result = {
+        "company": company,
+        "reg": reg,
+        "shareholders": shr,
+        "change_records": chg,
+        "risk": {"scan": scan, "hits": hits},
+    }
     cache_set(f"eng:{company}", result)
     return result
 
@@ -563,23 +671,86 @@ def _tool_cache_set(tool: str, company: str, payload: dict) -> None:
 
 
 async def _call_company_tool(client: httpx.AsyncClient, mcp: McpClient, tool: str, company: str) -> dict:
-    """调公司工具：共享缓存优先（同一企业 24h 内只实查一次）"""
+    """调公司工具：共享缓存优先（同一企业 1 年内只实查一次）。
+    2026-09-04：失败不写缓存（防失败结果污染缓存永久命中）。"""
     hit = _tool_cache_get(tool, company)
     if hit is not None:
         return hit
     r = await mcp.call(client, tool, {"searchKey": company})
-    _tool_cache_set(tool, company, r)
+    if r.get("ok"):
+        _tool_cache_set(tool, company, r)
     return r
 
 
 async def _call_risk_tool(client: httpx.AsyncClient, mcp: McpClient, tool: str, company: str) -> dict:
-    """调风险工具：共享缓存优先"""
+    """调风险工具：共享缓存优先；失败不写缓存。"""
     hit = _tool_cache_get(tool, company)
     if hit is not None:
         return hit
     r = await mcp.call(client, tool, {"searchKey": company})
-    _tool_cache_set(tool, company, r)
+    if r.get("ok"):
+        _tool_cache_set(tool, company, r)
     return r
+
+
+# ---------- 只扫不钻：命中清单（2026-09-04 用户拍板） ----------
+# 债权尽调、债务人画像 = 只扫（risk_scan）不钻：概要只展示"扫"到的命中维度与条数；
+# 案号/示例仅在缓存已有该明细工具结果时附带（零积分），绝不为凑示例主动钻取。
+def _detail_sample(payload: dict | None, n: int = 150) -> str:
+    """从明细工具结果里抽一段示例文本（首条记录的前几个标量字段），供报告'示例'列展示"""
+    if not payload or not payload.get("ok"):
+        return ""
+    data = payload.get("data")
+    lst = data if isinstance(data, list) else None
+    if isinstance(data, dict):
+        for v in data.values():
+            if isinstance(v, list) and v:
+                lst = v
+                break
+    if isinstance(lst, list) and lst:
+        first = lst[0]
+        if isinstance(first, dict):
+            parts = []
+            for v in first.values():
+                if isinstance(v, (dict, list)):
+                    continue
+                s = str(v).strip()
+                if s and s != "[]":
+                    parts.append(s)
+                if len(parts) >= 3:
+                    break
+            return "；".join(parts)[:n] if parts else ""
+        return str(first)[:n]
+    if isinstance(data, dict):
+        for k in ("摘要", "说明", "搜索结果"):
+            if isinstance(data.get(k), str) and data[k].strip():
+                return data[k][:n]
+    return ""
+
+
+def _scan_hits(scan: dict, company: str) -> list:
+    """从 risk_scan 结果生成命中清单（只扫不钻）：
+    [{label, count, tool, sample?}]——label/count 来自扫描本身；
+    sample 仅当明细工具结果已在共享缓存（tool:{tool}:{company}）时附上（零积分），否则不附、不钻取。
+    """
+    hits: list = []
+    if not (scan.get("ok") and isinstance(scan.get("data"), dict)):
+        return hits
+    for f in scan["data"].get("风险因子扫描") or []:
+        if not isinstance(f, dict):
+            continue
+        cnt = f.get("条目数") or 0
+        if cnt <= 0:
+            continue
+        t = f.get("明细工具") or ""
+        item: dict = {"label": f.get("风险因子") or "", "count": cnt, "tool": t}
+        if t:
+            cached = _tool_cache_get(t, company)
+            sample = _detail_sample(cached) if cached else ""
+            if sample:
+                item["sample"] = sample
+        hits.append(item)
+    return hits
 
 
 # ---------- 负缓存（查无此名，短 TTL，防积分浪费） ----------
@@ -616,7 +787,7 @@ def neg_cache_set(company: str) -> None:
 
 class QccQueryRequest(BaseModel):
     company: str
-    mode: str = "full"  # full=全量(演示页) / eng=债权尽调 / clues=财产线索 / deep=深挖
+    mode: str = "full"  # full=全量(演示页) / eng=债权尽调 / clues=财产线索 / deep=深挖 / profile=债务人画像
 
 
 @router.get("/qcc/history")
@@ -633,11 +804,16 @@ async def qcc_history():
                 p = json.loads(r.payload)
                 biz = p.get("biz", {})
                 risk = p.get("risk", {})
+                risk_hits = risk.get("hits") or []
+                risk_details = risk.get("details") or {}
+                # 只扫工作流(eng/profile)记录 hits 命中维度数；钻取工作流(clues/deep)记明细 ok 数
+                risk_records = len(risk_hits) if risk_hits else sum(
+                    1 for v in risk_details.values() if v.get("ok"))
                 items.append({
                     "company": r.company,
                     "created_at": r.created_at.isoformat() if r.created_at else None,
                     "biz_count": sum(1 for v in biz.values() if v.get("ok")),
-                    "risk_records": sum(1 for v in risk.get("details", {}).values() if v.get("ok")),
+                    "risk_records": risk_records,
                 })
             except Exception:
                 continue
@@ -674,12 +850,21 @@ async def qcc_query(payload: QccQueryRequest, user=Depends(get_current_user)):
         return result
 
     if payload.mode == "eng":
-        # ① 债权尽调工作流：工商 + 涉案案号/简述（先扫后钻）
+        # ① 债权尽调工作流：工商+股东+变更 + 涉案案号/简述（先扫后钻）
         try:
             result = await query_engine_summary(company)
             return {"ok": True, "cached": False, "data": result}
         except Exception as e:
             logger.exception("QCC dd query failed for %s", company)
+            return {"ok": False, "error": str(e)}
+
+    if payload.mode == "profile":
+        # ④ 债务人画像工作流：全维度速览（供 PDF "XXX企业速览"）
+        try:
+            result = await query_debtor_profile(company)
+            return {"ok": True, "cached": False, "data": result}
+        except Exception as e:
+            logger.exception("QCC profile query failed for %s", company)
             return {"ok": False, "error": str(e)}
 
     if payload.mode == "clues":
@@ -724,7 +909,7 @@ async def qcc_query(payload: QccQueryRequest, user=Depends(get_current_user)):
 # ---------- 单条强制刷新（2026-08-31 用户确认：只做单条，不做全量，防误点） ----------
 def _cache_keys_for(company: str) -> list[str]:
     """该债务人在缓存中的全部键：全量键、eng/clues/deep/neg 前缀键、工具级 tool:* 键"""
-    keys = [company, f"eng:{company}", f"clues:{company}", f"deep:{company}", f"neg:{company}"]
+    keys = [company, f"eng:{company}", f"clues:{company}", f"deep:{company}", f"profile:{company}", f"neg:{company}"]
     db = SessionLocal()
     try:
         prefix = "tool:"
@@ -784,6 +969,9 @@ async def qcc_refresh(payload: QccRefreshRequest, user=Depends(require_admin)):
             return {"ok": True, "deleted": deleted, "cached": False, "data": result}
         if payload.mode == "deep":
             result = await query_deep_investigation(company)
+            return {"ok": True, "deleted": deleted, "cached": False, "data": result}
+        if payload.mode == "profile":
+            result = await query_debtor_profile(company)
             return {"ok": True, "deleted": deleted, "cached": False, "data": result}
         result = await query_full(company)
         cache_set(company, result)

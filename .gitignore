@@ -25,12 +25,18 @@ deploy/.env
 # ===== 运行时数据（不入库；种子文件 fonts/llm_constraints.md 入库）=====
 backend/data/app.db
 backend/data/app.db.bak
+backend/data/app.db.bak_*
 backend/data/app.db-*
 backend/data/uploads/
 backend/data/pdf/
 backend/data/*.log
 backend/reports/
 backend/uploads/
+
+# ===== 一次性探测/中间产物（不入库）=====
+.pytmp/
+_*.txt
+_*.json
 
 # ===== 部署临时物 =====
 deploy/certbot-www/

@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Card, Descriptions, Button, Space, Typography, Spin, Table, Tag, Empty, Divider, message } from 'antd'
-import { DownloadOutlined, ArrowLeftOutlined, SafetyCertificateOutlined } from '@ant-design/icons'
+import { DownloadOutlined, ArrowLeftOutlined } from '@ant-design/icons'
 import client from '../api/client'
-import { debtorProfileApi } from '../api'
+import { cluesApi } from '../api'
 import { useAuthStore } from '../store/auth'
 
 const { Title, Text } = Typography
 
-/** 企业速览 网页版报告（与尽调报告同流程：查看 + 下载 PDF）2026-09-04 */
-export default function DebtorReportPage() {
+/** 财产线索报告 网页版（与画像/尽调报告同流程：查看 + 下载 PDF）2026-09-06 */
+export default function ClueReportPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const token = useAuthStore((s) => s.token)
@@ -19,7 +19,7 @@ export default function DebtorReportPage() {
 
   useEffect(() => {
     if (!token) { navigate('/login', { state: { from: window.location.pathname + window.location.search } }); return }
-    debtorProfileApi.detail(id)   // 后端返回 {ok, report}
+    cluesApi.reportDetail(id)
       .then((resp) => { if (resp?.ok && resp.report) setReport(resp.report); else message.error(resp?.error || '报告不存在') })
       .catch(() => {})
       .finally(() => setLoading(false))
@@ -29,13 +29,13 @@ export default function DebtorReportPage() {
     setDl(true)
     try {
       // 原生 fetch + blob（与债权尽调报告下载同款，避免 axios 拦截器对二进制的干扰 2026-09-06）
-      const resp = await fetch(`/api/debtor-profile/${id}/download`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
+      const resp = await fetch(`/api/clues/report/${id}/download`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
       if (!resp.ok) throw new Error('下载失败')
       const blob = await resp.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${(report?.company || '企业')}企业速览.pdf`
+      a.download = `${(report?.company || '企业')}财产线索报告.pdf`
       document.body.appendChild(a)
       a.click()
       URL.revokeObjectURL(url)
@@ -55,12 +55,12 @@ export default function DebtorReportPage() {
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 16px 60px' }}>
       <Space style={{ marginBottom: 12 }}>
         <Button type="link" icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)} style={{ paddingLeft: 0 }}>返回</Button>
-        <Tag color="blue">企业速览</Tag>
+        <Tag color="orange">财产线索报告</Tag>
       </Space>
 
       {/* 头部 */}
-      <Card style={{ marginBottom: 16, background: 'linear-gradient(135deg,#f0f6ff,#ffffff)' }}>
-        <Title level={2} style={{ marginBottom: 4, color: '#0d3b73' }}>{report.company}企业速览</Title>
+      <Card style={{ marginBottom: 16, background: 'linear-gradient(135deg,#fff7e6,#ffffff)' }}>
+        <Title level={2} style={{ marginBottom: 4, color: '#874d00' }}>{report.company}财产线索报告</Title>
         {report.search_name && report.search_name !== report.company && (
           <Text type="secondary">（已更名：{report.search_name}）</Text>
         )}
@@ -69,7 +69,9 @@ export default function DebtorReportPage() {
           <Descriptions.Item label="登记状态">{sum.status || '—'}</Descriptions.Item>
           <Descriptions.Item label="成立日期">{sum.established || '—'}</Descriptions.Item>
           <Descriptions.Item label="注册资本">{sum.capital || '—'}</Descriptions.Item>
-          <Descriptions.Item label="股东数">{sum.shareholder_count ?? '—'} 名</Descriptions.Item>
+          <Descriptions.Item label="财产线索">{sum.clue_total ?? '—'} 条</Descriptions.Item>
+          <Descriptions.Item label="无形资产">{sum.ipr_total ?? '—'} 条</Descriptions.Item>
+          <Descriptions.Item label="权利主张案件">{sum.claim_count ?? '—'} 起</Descriptions.Item>
           <Descriptions.Item label="数据截至">{report.queried_at || '—'}</Descriptions.Item>
         </Descriptions>
         {sum.credit_code && <Text type="secondary" style={{ fontSize: 12 }}>统一社会信用代码：{sum.credit_code}</Text>}
@@ -78,12 +80,14 @@ export default function DebtorReportPage() {
           {(sum.risk_breakdown || []).length === 0
             ? <Text type="secondary">未发现失信/被执行/冻结等记录</Text>
             : (sum.risk_breakdown || []).map((r) => (
-              <Tag key={r.label} color={r.count > 0 ? 'red' : 'default'}>{r.label} {r.count} 条</Tag>
+              <Tag key={r.label} color={r.count > 0 ? (['被执行人', '失信信息'].includes(r.label) ? 'red' : 'orange') : 'default'}>
+                {r.label} {r.count} 条
+              </Tag>
             ))}
         </div>
         <Space style={{ marginTop: 16 }}>
           <Button type="primary" icon={<DownloadOutlined />} loading={dl} disabled={!report.download_url} onClick={download}>
-            下载 PDF（{report.company}企业速览）
+            下载 PDF（{report.company}财产线索报告）
           </Button>
           {!report.download_url && <Text type="secondary">PDF 未生成，可稍后重试</Text>}
         </Space>
@@ -138,7 +142,7 @@ export default function DebtorReportPage() {
 
       <Divider />
       <Text type="secondary" style={{ fontSize: 12, display: 'block', textAlign: 'center' }}>
-        本报告由 NPL CN 平台基于企查查公开数据生成，数据截至 {report.queried_at}，仅供参考，不构成投资建议。
+        本报告由 NPL CN 平台基于公开渠道信息生成，数据截至 {report.queried_at}，仅供参考，不构成投资建议。
       </Text>
     </div>
   )

@@ -80,6 +80,20 @@ def my_reports(user: User = Depends(get_current_user), db: Session = Depends(get
             "queried_at": p.queried_at,
             "created_at": p.created_at.isoformat() if p.created_at else None,
         })
+    # 2026-09-06：财产线索单企业报告并入"我的报告"（重构后：查询即报告）
+    from ..models import PropertyClueReport
+    clue_rows = db.query(PropertyClueReport).filter(PropertyClueReport.user_id == user.id) \
+        .order_by(PropertyClueReport.id.desc()).all()
+    for c in clue_rows:
+        out.append({
+            "type": "clue",
+            "clue_id": c.id,
+            "debtor_name": c.company,
+            "task_status": "done",
+            "version": 1,
+            "queried_at": c.queried_at,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+        })
     # 2026-09-04：合并后按生成时间倒序（新生成的报告在最上面）
     out.sort(key=lambda x: x.get("created_at") or "", reverse=True)
     return ok({"reports": out})

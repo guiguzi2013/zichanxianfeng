@@ -100,6 +100,10 @@ export const cluesApi = {
   caseReportDeep: (entities) => client.post('/clues/case-report-deep', { entities }, { timeout: 600000 }),
   resolveName: (name) => client.post('/clues/resolve-name', { name }, { timeout: 180000 }),
   deepInvestigation: (company) => client.post('/clues/deep-investigation', { company }, { timeout: 300000 }),
+  // 2026-09-06 重构：单企业查询即报告
+  queryReport: (company) => client.post('/clues/query-report', { company }, { timeout: 600000 }),
+  reportDetail: (id) => client.get(`/clues/report/${id}`),
+  reportDownloadUrl: (id) => `/api/clues/report/${id}/download`,
 }
 
 export const feedbackApi = {

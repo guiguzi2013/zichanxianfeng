@@ -22,6 +22,7 @@ import ValuationPage from './pages/ValuationPage'
 import TaskClaimsPage from './pages/TaskClaimsPage'
 import AdminLandPricePage from './pages/AdminLandPricePage'
 import PropertyCluesPage from './pages/PropertyCluesPage'
+import ClueReportPage from './pages/ClueReportPage'
 import DebtorProfilePage from './pages/DebtorProfilePage'
 import DebtorReportPage from './pages/DebtorReportPage'
 import DebtListPage from './pages/DebtListPage'
@@ -104,6 +105,7 @@ export default function App() {
             <Route path="/property-clues" element={<PropertyCluesPage />} />
             <Route path="/debtor-profile" element={<DebtorProfilePage />} />
             <Route path="/debtor-report/:id" element={<DebtorReportPage />} />
+            <Route path="/clue-report/:id" element={<ClueReportPage />} />
             <Route path="/debts" element={<DebtListPage />} />
             <Route path="/notices" element={<NoticeListPage />} />
             <Route path="/search" element={<SearchPage />} />

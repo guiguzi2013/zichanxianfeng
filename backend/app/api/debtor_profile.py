@@ -19,31 +19,12 @@ from pydantic import BaseModel
 from ..config import get_settings
 from ..database import SessionLocal
 from ..models import QccProfile
+from ..services.company_name_check import looks_like_abbrev, looks_like_person
 from .deps import get_current_user
 from ..models.user import User
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["debtor-profile"])
-
-# 企业名称特征词（自然人启发式判断用）
-_ORG_WORDS = ("公司", "集团", "有限合伙", "厂", "店", "社", "中心", "银行", "学校", "医院",
-              "事务所", "合作社", "研究院", "酒店", "广场", "商行", "部", "协会", "基金会",
-              "驿站", "超市", "商场", "娱乐", "俱乐部", "工作室", "中心", "所", "园", "区")
-_ORG_SUFFIX = re.compile(r"(?:%s)$" % "|".join(_ORG_WORDS))
-
-
-def looks_like_person(name: str) -> bool:
-    """启发式：明显自然人（短名且无企业后缀）→ True，用于提示用户填企业全称"""
-    t = name.strip()
-    if len(t) < 2 or len(t) > 60:
-        return True
-    # 含"有限/股份/集团/公司/厂/中心"等 → 企业
-    if any(w in t for w in ("有限公司", "股份", "集团", "公司", "有限合伙", "厂", "中心", "银行", "学校", "医院", "事务所")):
-        return False
-    # 纯中文 2-4 字无企业词 → 大概率自然人
-    if re.fullmatch(r"[\u4e00-\u9fa5]{2,4}", t):
-        return True
-    return False
 
 
 # ---------- 数据清洗：qcc profile 结果 → 可渲染 sections ----------
@@ -90,6 +71,18 @@ def _fmt(v) -> str:
 def _limit(text, n=400):
     t = str(text or "").strip()
     return t[:n] + ("…" if len(t) > n else "")
+
+
+def _dim_note(res: dict, empty_txt: str, label: str = "") -> str | None:
+    """维度空结果说明(2026-09-07 海尔年报事故修复):
+    查询失败(ok=False, 如余额不足/接口异常) → 提示"未能获取", 不得误报为"企业没有";
+    查询成功但无记录 → empty_txt(中性, 不武断定性, 建议以官方公示渠道核验)。"""
+    if not res:
+        return None
+    if res.get("ok") is False:
+        return f"{label}信息本次未能获取，建议稍后重试，或以官方公示渠道核验。" if label else \
+            "本维度信息本次未能获取，建议稍后重试，或以官方公示渠道核验。"
+    return empty_txt
 
 
 def _build_sections(result: dict) -> list:
@@ -171,18 +164,28 @@ def _build_sections(result: dict) -> list:
     if sh_rows:
         sec2["tables"].append({"headers": ["股东名称", "持股比例", "认缴出资额", "认缴出资日期"], "rows": sh_rows[:30]})
     if not sec2["kvs"] and not sh_rows:
-        sec2["note"] = "未查询到股权结构信息。"
+        sec2["note"] = _dim_note(biz.get("get_shareholder_info"),
+                                 "未检索到公示的股权结构信息（该主体股东或未公示，以工商登记为准）。", "股权结构")
     sections.append(sec2)
 
     # 三、主要人员
-    per = _data(biz.get("get_key_personnel") or {})
+    per_res = biz.get("get_key_personnel") or {}
+    per = _data(per_res)
     per_rows = []
     for it in (_first_list(per) or []):
         if isinstance(it, dict):
             per_rows.append([_fmt(it.get("姓名") or it.get("name")),
                              _fmt(it.get("职务") or it.get("职位"))])
-    sections.append({"h": "主要人员", "tables": [{"headers": ["姓名", "职务"], "rows": per_rows[:40]}] if per_rows else [],
-                     "note": None if per_rows else ("未查询到主要人员信息" if per else None)})
+    per_note = None
+    if not per_rows:
+        if per_res.get("ok") is False:
+            per_note = _dim_note(per_res, "", "主要人员")
+        elif per is not None:
+            # 查询成功但该主体无董监高公示数据(老主体/股份制集团常见) → 中性提示, 不武断
+            per_note = "未检索到该主体公示的主要人员（董监高）备案信息，建议以工商登记或官方公示渠道核验。"
+    sections.append({"h": "主要人员",
+                     "tables": [{"headers": ["姓名", "职务"], "rows": per_rows[:40]}] if per_rows else [],
+                     "note": per_note})
 
     # 四、对外投资与分支机构
     sec4 = {"h": "对外投资与分支机构", "kvs": [], "tables": []}
@@ -206,29 +209,90 @@ def _build_sections(result: dict) -> list:
     if br_rows:
         sec4["tables"].append({"headers": ["分支机构", "负责人", "状态"], "rows": br_rows[:40]})
     if not inv_rows and not br_rows:
-        sec4["note"] = "未查询到对外投资或分支机构记录。"
+        sec4["note"] = _dim_note(biz.get("get_external_investments"),
+                                 "未检索到对外投资或分支机构记录。", "对外投资/分支")
     sections.append(sec4)
 
-    # 五、经营与财务（年报；有则显，无则不显——2026-09-04 用户确认）
+    # 五、经营与财务（年报；2026-09-06 重构：砍 get_financial_data——一般企业财务库无记录，
+    # 年报财务企业普遍"选择不公示"；用 annual_reports 展示 存在性/发布日期/社保/出资/联系，
+    # 财务数字有公示才填表，否则明确提示"财务未公示"）
     sec5 = {"h": "经营与财务", "kvs": [], "tables": []}
-    fin = _data(biz.get("get_financial_data") or {})
-    if isinstance(fin, dict):
-        sec5["kvs"].extend(_kv_of(fin, {"营业收入": "营业收入", "净利润": "净利润", "总资产": "总资产",
-                                        "总负债": "总负债", "纳税总额": "纳税总额", "资产负债率": "资产负债率",
-                                        "年份": "数据年份", "年报年份": "年报年份"}))
     ar = _data(biz.get("get_annual_reports") or {})
-    ar_rows = []
-    for it in (_first_list(ar) or []):
-        if isinstance(it, dict):
-            ar_rows.append([_fmt(it.get("年度") or it.get("年份")),
-                            _fmt(it.get("资产总额") or it.get("总资产")),
-                            _fmt(it.get("负债总额") or it.get("总负债")),
-                            _fmt(it.get("营业总收入") or it.get("营业收入") or it.get("销售总额")),
-                            _fmt(it.get("净利润") or it.get("利润总额"))])
-    if ar_rows:
-        sec5["tables"].append({"headers": ["年度", "资产总额", "负债总额", "营业总收入", "净利润"], "rows": ar_rows[-3:]})
-    if not sec5["kvs"] and not ar_rows:
-        sec5["note"] = "未查询到公开财务/年报数据（企业多未公示，属常见情况）。"
+    ar_list = _first_list(ar) or []
+    if ar_list:
+        # 最近年报（列表第一条通常为最新；再按 年报年度 文本倒排稳妥）
+        def _year_no(it: dict) -> str:
+            y = str(it.get("年报年度") or it.get("年度") or "")
+            m = re.search(r"(\d{4})", y)
+            return m.group(1) if m else "0"
+
+        latest = max(ar_list, key=_year_no) if ar_list else ar_list[0]
+        year_label = str(latest.get("年报年度") or latest.get("年度") or "")
+        pub = str(latest.get("发布日期") or "")
+        basic = latest.get("企业基本信息") or {}
+        asset = latest.get("企业资产状况信息") or {}
+        social = latest.get("社保信息") or {}
+        shares = latest.get("股东（发起人）及出资信息") or []
+
+        # 财务数字：年报资产状况公示才填表；不公示则 kvs 明示
+        def _fin(v):
+            s = str(v or "").strip()
+            return "" if (not s or "不公示" in s or "未公示" in s) else s
+
+        fin_vals = {"资产总额": _fin(asset.get("资产总额")),
+                    "所有者权益": _fin(asset.get("所有者权益合计")),
+                    "营业总收入": _fin(asset.get("营业总收入")),
+                    "净利润": _fin(asset.get("净利润")),
+                    "负债总额": _fin(asset.get("负债总额"))}
+        has_fin = any(fin_vals.values())
+        sec5["kvs"].append(["最近年报", year_label + (f"（{pub}发布）" if pub else "")])
+        # 年报总数：接口摘要优先（"该查询实体共有13条企业年报记录"，列表仅展示前3条）
+        total_txt = str(ar.get("摘要") or "")
+        total_no = re.search(r"(?:共|共有)\s*(\d+)\s*条", total_txt)
+        sec5["kvs"].append(["年报记录", f"共 {total_no.group(1) if total_no else len(ar_list)} 条已公布年报" +
+                            ("" if total_no else "（仅展示前几条）")])
+        if not has_fin:
+            sec5["kvs"].append(["财务数据", "企业选择不公示（一般企业年报财务多不公开，属常见情况）"])
+        # 社保人数（各险种；0人=无在缴员工，空壳/停业信号）
+        social_rows = []
+        for k in ("城镇职工基本养老保险", "职工基本医疗保险", "失业保险", "工伤保险", "生育保险"):
+            v = str(social.get(k) or "").strip()
+            if v and "不公示" not in v:
+                social_rows.append([k, v])
+        if social_rows:
+            sec5["tables"].append({"headers": ["社保险种", "参保人数"], "rows": social_rows})
+        # 股东实缴出资（年报口径；股东接口已有认缴/实缴，这里仅在有值且股东节未覆盖时展示）
+        share_rows = []
+        for sh in shares:
+            if isinstance(sh, dict):
+                share_rows.append([str(sh.get("股东名称") or ""),
+                                   str(sh.get("认缴出资额(万元)") or sh.get("认缴出资额") or ""),
+                                   str(sh.get("实缴出资额(万元)") or sh.get("实缴出资额") or "")])
+        if share_rows:
+            sec5["tables"].append({"headers": ["股东", "认缴出资(万元)", "实缴出资(万元)"], "rows": share_rows})
+        # 年报联系方式/主营（工商登记无电话/邮箱/主营，年报是最可靠来源）
+        contact = []
+        if basic.get("企业联系电话"):
+            contact.append(["联系电话", str(basic["企业联系电话"])])
+        if basic.get("电子邮箱"):
+            contact.append(["电子邮箱", str(basic["电子邮箱"])])
+        if basic.get("企业通信地址"):
+            contact.append(["通信地址", str(basic["企业通信地址"])])
+        if basic.get("企业主营业务活动"):
+            contact.append(["主营业务", str(basic["企业主营业务活动"])[:400]])
+        if contact:
+            sec5["tables"].append({"headers": ["项", "内容"], "rows": contact})
+        if has_fin:
+            sec5["tables"].append({"headers": ["年度", "资产总额", "负债总额", "营业总收入", "净利润"],
+                                   "rows": [fin_vals.get("资产总额") or "—",
+                                            fin_vals.get("负债总额") or "—",
+                                            fin_vals.get("营业总收入") or "—",
+                                            fin_vals.get("净利润") or "—"]})
+    else:
+        # 2026-09-07 修复: 查询失败(如余额不足)不得误报"企业未按时报送"; 成功无记录才给中性说明
+        sec5["note"] = _dim_note(biz.get("get_annual_reports"),
+                                 "未检索到已公示的企业年报记录（不同查询渠道同步情况不一，"
+                                 "建议以国家企业信用信息公示系统 www.gsxt.gov.cn 披露为准）。", "企业年报")
     sections.append(sec5)
 
     # 七、司法与合规风险（只扫不钻 2026-09-04：risk_scan 命中清单；示例仅复用缓存已有明细，零积分）
@@ -250,7 +314,8 @@ def _build_sections(result: dict) -> list:
     sections.append(sec7)
 
     # 八、历史变更（2026-09-04 用户确认重要维度；按真实返回：变更项目/变更前内容(list)/变更后内容(list)）
-    chg = _data(biz.get("get_change_records") or {})
+    chg_res = biz.get("get_change_records") or {}
+    chg = _data(chg_res)
     chg_rows = []
     for it in (_first_list(chg) or []):
         if isinstance(it, dict):
@@ -262,9 +327,15 @@ def _build_sections(result: dict) -> list:
                              _fmt(it.get("变更项目") or it.get("变更事项") or it.get("项目")),
                              _j(it.get("变更前内容") or it.get("变更前")),
                              _j(it.get("变更后内容") or it.get("变更后"))])
+    chg_note = None
+    if not chg_rows:
+        if chg_res.get("ok") is False:
+            chg_note = _dim_note(chg_res, "", "工商变更")
+        elif chg is not None:
+            chg_note = "未检索到工商变更记录（该主体或长期无变更）。"
     sections.append({"h": "历史变更", "tables": [{"headers": ["变更日期", "变更事项", "变更前", "变更后"],
-                                                "rows": chg_rows[:40]}] if chg_rows else [],
-                     "note": None if chg_rows else ("未查询到工商变更记录" if chg else None)})
+                                                 "rows": chg_rows[:40]}] if chg_rows else [],
+                     "note": chg_note})
 
     return sections
 
@@ -305,6 +376,9 @@ async def profile_query(req: ProfileQueryRequest, user: User = Depends(get_curre
     if looks_like_person(company):
         return {"ok": False, "error": "债务人画像仅支持企业。请填写企业工商全称（如“XX有限公司/股份公司”）；"
                                       "自然人不支持画像，可用「财产线索」对个人另作处理。"}
+    if looks_like_abbrev(company):
+        return {"ok": False, "error": "输入的名称疑似不完整（非企业工商全称）。企业名称规范：行政区划＋字号＋行业＋组织形式"
+                                      "（如：青岛市XX房地产开发有限公司）。请按工商登记全称输入后重试。"}
 
     # 2026-09-04：重复提交同一企业 → 提示去"我的报告"查看，不重复生成（避免重复扣积分）
     db0 = SessionLocal()
@@ -438,6 +512,9 @@ def profile_download(rid: int, user: User = Depends(get_current_user)):
             return {"ok": False, "error": "PDF 尚未生成或文件已清理"}
         company = row.company or "企业"
         fname = f"{company}企业速览.pdf"
-        return FileResponse(row.pdf_path, filename=fname)
+        # no-store: 防浏览器缓存旧版 PDF(2026-09-06 与线索下载同修)
+        return FileResponse(row.pdf_path, filename=fname,
+                            headers={"Cache-Control": "no-store, no-cache, must-revalidate",
+                                     "Pragma": "no-cache"})
     finally:
         db.close()

@@ -514,3 +514,169 @@ async def build_case_report_deep_api(req: CaseReportRequest, user: User = Depend
             "deep_estimate_total": sum(deep_estimates.values()),
         },
     }, f"深度对比报告完成：原版新增 {new_calls} 次调用；深度调查 {deep_cached} 家缓存命中 + {deep_calls} 家新查（预估约 {sum(deep_estimates.values())} 积分）")
+
+
+# ================= 单企业查询即报告（2026-09-06 重构：输入一家企业 → 查询即生成报告） =================
+# 用户拍板：①单企业输入 ②查询结果直接生成报告(查询+分析融合) ③可下载PDF、在"我的报告"回看/重复下载
+# ④同企业只能查一次(重复提示已有) ⑤去掉"深度对比"(深挖后续再做)。旧接口(case-report 等)前端停用保留。
+
+class ClueQueryRequest(BaseModel):
+    company: str = Field(min_length=1, max_length=200)
+
+
+@router.post("/query-report", response_model=None)
+async def clue_query_report(req: ClueQueryRequest, user: User = Depends(get_current_user)):
+    """输入一家企业 → 查财产线索 → 融合追索分析 → 落库生成报告（返回报告 id）"""
+    from datetime import datetime
+    from ..database import SessionLocal
+    from ..models import PropertyClueReport
+
+    company = (req.company or "").strip()
+    if not company:
+        return {"ok": False, "error": "请输入企业名称"}
+
+    # 仅支持企业(2026-09-06 用户拍板): 自然人名/疑似简称 → 零积分拦截, 不发起工商查询
+    from ..services.company_name_check import looks_like_abbrev, looks_like_person
+    if looks_like_person(company):
+        return {"ok": False, "error": "财产线索仅支持企业，不接受自然人或姓名。请填写企业工商全称（如：XX置业有限公司）；"
+                                      "自然人建议通过线下渠道调查，或结合其担任股东/法人的企业查询。"}
+    if looks_like_abbrev(company):
+        return {"ok": False, "error": "输入的名称疑似不完整（非企业工商全称）。企业名称规范：行政区划＋字号＋行业＋组织形式"
+                                      "（如：青岛市XX房地产开发有限公司）。请按工商登记全称输入后重试。"}
+
+    # 防重：同企业只能查一次（2026-09-06 用户拍板）——重复输入引导去「我的报告」
+    db0 = SessionLocal()
+    try:
+        existed = db0.query(PropertyClueReport).filter(
+            PropertyClueReport.user_id == user.id, PropertyClueReport.company == company).first()
+        if existed:
+            return {"ok": False, "already": True,
+                    "error": "该企业的财产线索报告已生成，请前往「我的报告」查看（可重复下载）。",
+                    "report_id": existed.id}
+    finally:
+        db0.close()
+
+    # 查询财产线索（走共享缓存；缓存命中的维度零新增积分）
+    from ..api.qcc import query_company_ipr, query_property_clues
+    try:
+        result = await query_property_clues(company)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("clue report query failed for %s", company)
+        return {"ok": False, "error": f"企查查查询失败：{e}"}
+
+    reg_ok = (result.get("biz") or {}).get("get_company_registration_info", {}).get("ok")
+    if not reg_ok:
+        return {"ok": False,
+                "error": "未在企查查查询到该名称的企业登记信息。可能原因：①名称输入不完整或非工商全称"
+                         "（曾用名/简称请先用工商全称）②该名称更像自然人。请核对后重试。"}
+
+    # 无形资产 7 工具（2026-09-06 用户拍板：财产线索报告「无形资产」章节）
+    # 独立查询不给 query_property_clues 旧调用方(名称解析/旧案件流程)背成本；
+    # USCC 精准命中；工具级缓存保证同主体重复报告/未来复用零新增积分（≈7 分/全新主体）。
+    ipr: dict = {}
+    try:
+        reg_d = (result.get("biz") or {}).get("get_company_registration_info", {}).get("data") or {}
+        uscc = reg_d.get("统一社会信用代码") if isinstance(reg_d, dict) else None
+        ipr = await query_company_ipr(result.get("search_name") or company, uscc)
+        if ipr:
+            result["ipr"] = ipr
+    except Exception:  # noqa: BLE001
+        logger.exception("clue report ipr query failed for %s", company)
+        ipr = {}
+
+    # 构建报告 sections（查询结果 + 无形资产 + 追索分析 融合）
+    from ..services.clue_report_builder import build_sections, build_summary
+    sections = build_sections(result)
+    summary = build_summary(result)
+    queried_at = result.get("queried_at") or datetime.now().strftime("%Y-%m-%d")
+
+    # 落库
+    settings = get_settings()
+    db = SessionLocal()
+    try:
+        row = PropertyClueReport(user_id=user.id, company=company,
+                                 search_name=result.get("search_name") or company,
+                                 content=json.dumps({"sections": sections, "summary": summary,
+                                                     "raw": {k: v for k, v in (result.get("biz") or {}).items()},
+                                                     "risk": result.get("risk"),
+                                                     "ipr": result.get("ipr")},
+                                                    ensure_ascii=False),
+                                 queried_at=queried_at)
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        rid = row.id
+    except Exception:
+        db.rollback()
+        logger.exception("clue report db insert failed")
+        return {"ok": False, "error": "报告落库失败"}
+    finally:
+        db.close()
+
+    # 生成 PDF
+    report_no = f"CS{datetime.now().strftime('%Y%m%d')}-{rid}"
+    pdf_dir = settings.pdf_dir
+    pdf_path = f"{pdf_dir}/clue_{rid}.pdf"
+    meta = {"queried_at": queried_at, "sources": "企查查（实时接口）", "report_no": report_no,
+            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
+    try:
+        from ..services.clue_report_pdf import generate_clue_report_pdf
+        generate_clue_report_pdf(company, sections, meta, pdf_path)
+    except Exception:  # noqa: BLE001
+        logger.exception("clue report pdf failed for %s", company)
+        pdf_path = None
+    db = SessionLocal()
+    try:
+        row = db.get(PropertyClueReport, rid)
+        row.pdf_path = pdf_path
+        db.commit()
+    finally:
+        db.close()
+
+    return {"ok": True, "report": {"id": rid, "company": company,
+                                   "download_url": f"/api/clues/report/{rid}/download" if pdf_path else None}}
+
+
+@router.get("/report/{rid}", response_model=None)
+def clue_report_detail(rid: int, user: User = Depends(get_current_user)):
+    """财产线索报告详情（网页版渲染数据）"""
+    from ..database import SessionLocal
+    from ..models import PropertyClueReport
+    db = SessionLocal()
+    try:
+        row = db.get(PropertyClueReport, rid)
+        if row is None or row.user_id != user.id:
+            return {"ok": False, "error": "报告不存在"}
+        content = json.loads(row.content) if row.content else {}
+        return {"ok": True, "report": {
+            "id": row.id, "company": row.company, "search_name": row.search_name,
+            "sections": content.get("sections") or [],
+            "summary": content.get("summary") or {},
+            "queried_at": row.queried_at,
+            "download_url": f"/api/clues/report/{row.id}/download" if row.pdf_path else None,
+        }}
+    finally:
+        db.close()
+
+
+@router.get("/report/{rid}/download")
+def clue_report_download(rid: int, user: User = Depends(get_current_user)):
+    """财产线索报告 PDF 下载"""
+    import os
+    from fastapi.responses import FileResponse
+    from ..database import SessionLocal
+    from ..models import PropertyClueReport
+    db = SessionLocal()
+    try:
+        row = db.get(PropertyClueReport, rid)
+        if row is None or row.user_id != user.id:
+            raise err("报告不存在", http_status=404)
+        if not row.pdf_path or not os.path.exists(row.pdf_path):
+            raise err("PDF 尚未生成", http_status=404)
+        # no-store: 防浏览器/阅读器缓存旧版 PDF(报告更新后下载到旧文件 2026-09-06)
+        return FileResponse(row.pdf_path, media_type="application/pdf",
+                            headers={"Cache-Control": "no-store, no-cache, must-revalidate",
+                                     "Pragma": "no-cache"},
+                            filename=f"{row.company}财产线索报告.pdf")
+    finally:
+        db.close()

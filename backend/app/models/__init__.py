@@ -22,6 +22,7 @@ from .activity_record import ActivityRecord
 from .land_price_ref import LandPriceRef
 from .clue_report import ClueReport
 from .qcc_profile import QccProfile
+from .property_clue_report import PropertyClueReport
 
 __all__ = [
     "User",
@@ -48,4 +49,5 @@ __all__ = [
     "LandPriceRef",
     "ClueReport",
     "QccProfile",
+    "PropertyClueReport",
 ]

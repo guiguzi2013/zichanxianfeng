@@ -4,17 +4,9 @@ import { SearchOutlined, IdcardOutlined, SafetyCertificateOutlined } from '@ant-
 import { debtorProfileApi } from '../api'
 import { useAuthStore } from '../store/auth'
 import { useNavigate } from 'react-router-dom'
+import { looksAbbrev, looksPerson } from '../utils/companyName'
 
 const { Title, Text } = Typography
-
-const ORG_WORDS = ['有限公司', '股份', '集团', '公司', '有限合伙', '厂', '中心', '银行', '学校', '医院', '事务所', '合作社', '研究院']
-
-function looksPerson(name) {
-  const t = (name || '').trim()
-  if (!t || t.length < 2 || t.length > 60) return false
-  if (ORG_WORDS.some((w) => t.includes(w))) return false
-  return /^[\u4e00-\u9fa5]{2,4}$/.test(t)
-}
 
 export default function DebtorProfilePage() {
   const navigate = useNavigate()
@@ -29,6 +21,10 @@ export default function DebtorProfilePage() {
     if (!token) { message.warning('请先登录后查询'); navigate('/login', { state: { from: window.location.pathname + window.location.search } }); return }
     if (looksPerson(name)) {
       message.error('债务人画像仅支持企业。请填写企业工商全称（如“XX有限公司”），自然人不支持画像。')
+      return
+    }
+    if (looksAbbrev(name)) {
+      message.error('输入的名称疑似不完整。请填写企业工商全称，如：青岛市XX房地产开发有限公司。')
       return
     }
     Modal.confirm({

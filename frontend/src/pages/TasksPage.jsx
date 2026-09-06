@@ -94,8 +94,8 @@ export default function TasksPage() {
   const doneTasks = tasks.filter((t) => t.status === 'done' || t.status === 'partial')
   // 报告级列表：每份报告一行（含债务人画像/企业速览 2026-09-04），点哪行看哪份
   const reportColumns = [
-    { title: '报告ID', dataIndex: 'report_id', width: 80, render: (v, r) => (r.type === 'profile' ? '—' : v) },
-    { title: '类型', dataIndex: 'type', width: 100, render: (v) => v === 'profile' ? <Tag color="blue">企业速览</Tag> : <Tag color="green">债权尽调</Tag> },
+    { title: '报告ID', dataIndex: 'report_id', width: 80, render: (v, r) => (r.type === 'profile' || r.type === 'clue' ? '—' : v) },
+    { title: '类型', dataIndex: 'type', width: 100, render: (v) => v === 'profile' ? <Tag color="blue">企业速览</Tag> : v === 'clue' ? <Tag color="orange">财产线索</Tag> : <Tag color="green">债权尽调</Tag> },
     {
       title: '债务人/企业', dataIndex: 'debtor_name', ellipsis: true,
       render: (v) => <Text strong>{v ? String(v).split('；')[0] : '—'}</Text>,
@@ -111,7 +111,9 @@ export default function TasksPage() {
       render: (_, record) => (
         record.type === 'profile'
           ? <Button type="link" onClick={() => navigate(`/debtor-report/${record.profile_id}`)}>查看报告</Button>
-          : <Button type="link" onClick={() => navigate(`/report/${record.task_id}/${record.report_id}`)}>查看报告</Button>
+          : record.type === 'clue'
+            ? <Button type="link" onClick={() => navigate(`/clue-report/${record.clue_id}`)}>查看报告</Button>
+            : <Button type="link" onClick={() => navigate(`/report/${record.task_id}/${record.report_id}`)}>查看报告</Button>
       ),
     },
   ]

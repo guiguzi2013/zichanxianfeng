@@ -708,6 +708,7 @@ export default function ReportPage() {
       const token = useAuthStore.getState().token
       const resp = await fetch(`/api/reports/${id}/pdf/download`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
+        cache: 'no-store',
       })
       if (!resp.ok) return false
       const blob = await resp.blob()

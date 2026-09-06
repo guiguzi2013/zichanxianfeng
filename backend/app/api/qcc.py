@@ -17,6 +17,7 @@
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 
 import httpx
@@ -94,10 +95,20 @@ CLUES_COMPANY_TOOLS = [
     ("get_external_investments", "对外投资", 5),
     ("get_branches", "分支机构", 5),
 ]
-# 2026-09-04 审计：企查查 MCP(company/risk 两路 tools/list)不提供以下接口，
-# 原 CLUES_IPR_TOOLS(专利/商标/软著/版权/IC/知产出质) 与 CLUES_ASSET_TOOLS
-# (行政许可/资质/产权交易/土地出让/土地转让/融资租赁) 全部移除——此前一直在无效调用(0 产出)。
-# 如企查查后续开放知产/资质类接口再补回。
+# 2026-09-06 更新：企查查 2026-05 扩容新增知产引擎 qcc-ipr(agent.qcc.com/mcp/ipr/stream, 18 工具)。
+# 2026-09-06 用户拍板财产线索查「无形资产」7 工具(独立于 query_property_clues 调用, 不计入旧流程):
+#   专利/国际专利/商标/商标文书(争议)/网络服务备案/特许经营/知产出质 —— 每工具 -1 分(实测流水),
+#   与 company/risk 共享同主体月 100 分封顶; 空结果(未发现记录)同样扣费。
+# 单价实测(2026-09-06 流水): 全部 -1 分/次。软著/作品版权/标准/IC/APP/公众号等未纳入(用户拍板)。
+CLUES_IPR_TOOLS = [
+    ("get_patent_info", "专利", 1),
+    ("get_international_patent", "国际专利", 1),
+    ("get_trademark_info", "商标", 1),
+    ("get_trademark_document", "商标文书", 1),
+    ("get_internet_service_info", "网络服务备案", 1),
+    ("get_commercial_franchise", "特许经营", 1),
+    ("get_ipr_pledge", "知产出质", 1),
+]
 # 风险路由财产工具（抵押/拍卖，risk_mcp）
 RISK_PROPERTY_TOOLS = [
     ("get_chattel_mortgage_info", "动产抵押", 3),
@@ -105,9 +116,12 @@ RISK_PROPERTY_TOOLS = [
     ("get_judicial_auction", "司法拍卖", 3),
 ]
 # 财产线索的司法因子（先扫后钻；重点：裁判文书判原告→未来债权；财产悬赏→未履行金额）
+# 2026-09-06：加 get_hearing_notice(开庭公告, 3分)——「权利主张案件」章节数据源:
+#   开庭公告含当事人角色+开庭日期(未来日期=待开庭/已过=已开庭未判), 命中才钻。
 CLUES_RISK_TOOLS = {
     "get_judicial_documents": "裁判文书(原告身份→未来债权)",
     "get_case_filing_info": "立案信息",
+    "get_hearing_notice": "开庭公告(权利方/开庭状态)",
     "get_property_asset_announcement": "财产悬赏公告(未履行金额)",
     "get_judgment_debtor_info": "被执行人",
     "get_dishonest_info": "失信信息",
@@ -433,19 +447,21 @@ async def query_deep_investigation(company: str) -> dict:
 
 # ================= ④ 债务人画像工作流（2026-09-04 用户确认新增） =================
 # 定位：输入债务人企业 → 出"XXX企业速览"PDF。所有工具走共享缓存——尽调/财产线索查过的
-# 维度零新增积分；反之画像查全后，对该企业尽调也基本零新增。新企业首次≈股东20+实控/受益/主要
-# 人员/变更/投资/分支/年报/财务 ≈ 40-50 积分(4-5元) + scan 5 分（司法只扫不钻），月封顶100积分。
+# 维度零新增积分；反之画像查全后，对该企业尽调也基本零新增。新企业首次≈
+# 工商3+股东20+实控5+受益5+主要人员5+变更5+投资5+分支5+年报3 ≈ 56分 + 复用risk_scan
+# （司法只扫不钻；2026-09-06 对账校正 key_personnel=5 分；用户拍板砍 get_financial_data——
+#   一般企业财务库无记录(上市公司/准上市才有但不在债务人范围)，年报已含社保/出资/联系，
+#   财务数字企业普遍'选择不公示'，扫财务接口无意义），月封顶100积分。
 PROFILE_BASE_TOOLS = [
     ("get_company_registration_info", "工商登记", 3),
     ("get_shareholder_info", "股东信息", 20),
     ("get_actual_controller", "实际控制人", 5),
     ("get_beneficial_owners", "受益所有人", 5),
-    ("get_key_personnel", "主要人员", 3),
+    ("get_key_personnel", "主要人员", 5),
     ("get_change_records", "变更记录", 5),
     ("get_external_investments", "对外投资", 5),
     ("get_branches", "分支机构", 5),
     ("get_annual_reports", "企业年报", 3),
-    ("get_financial_data", "财务数据", 3),
 ]
 PROFILE_QUAL_TOOLS = []  # 2026-09-04 审计：MCP 无 行政许可/资质 接口，移除(原含 get_administrative_license/get_qualifications)
 # 画像司法因子名册（2026-09-04 只扫不钻后不再钻取；保留作工具清单/缓存审计参考，
@@ -693,6 +709,36 @@ async def _call_risk_tool(client: httpx.AsyncClient, mcp: McpClient, tool: str, 
     return r
 
 
+async def _call_ipr_tool(client: httpx.AsyncClient, mcp: McpClient, tool: str, company: str) -> dict:
+    """调知产工具(qcc-ipr)：共享缓存优先(同主体同工具 1 年内只实查一次)；失败不写缓存。
+    工具级缓存 key 与 company/risk 同名工具不冲突(三路工具名无重叠)。"""
+    hit = _tool_cache_get(tool, company)
+    if hit is not None:
+        return hit
+    r = await mcp.call(client, tool, {"searchKey": company})
+    if r.get("ok"):
+        _tool_cache_set(tool, company, r)
+    return r
+
+
+# ---------- 无形资产查询(财产线索报告「无形资产」章节, 2026-09-06 用户拍板) ----------
+async def query_company_ipr(company: str, uscc: str | None = None) -> dict:
+    """查企业无形资产 7 工具(独立于 query_property_clues, 不给旧流程背成本):
+    key = USCC 优先(实测精准命中), 无 USCC 回退企业名。
+    返回 {tool: {"label","price",**调用结果}}; 工具级缓存保证重复查询零新增积分。
+    全量成本 ≈ 7 分/全新主体(流水实测各 -1), 计入同主体月 100 分封顶。
+    """
+    key = (uscc or "").strip() or company
+    async with httpx.AsyncClient() as client:
+        ipr_mcp = McpClient("/mcp/ipr/stream")
+        await ipr_mcp.init(client)
+        out: dict = {}
+        for tool, label, price in CLUES_IPR_TOOLS:
+            r = await _call_ipr_tool(client, ipr_mcp, tool, key)
+            out[tool] = {"label": label, "price": price, **r}
+    return out
+
+
 # ---------- 只扫不钻：命中清单（2026-09-04 用户拍板） ----------
 # 债权尽调、债务人画像 = 只扫（risk_scan）不钻：概要只展示"扫"到的命中维度与条数；
 # 案号/示例仅在缓存已有该明细工具结果时附带（零积分），绝不为凑示例主动钻取。
@@ -715,8 +761,13 @@ def _detail_sample(payload: dict | None, n: int = 150) -> str:
                 if isinstance(v, (dict, list)):
                     continue
                 s = str(v).strip()
-                if s and s != "[]":
-                    parts.append(s)
+                if not s or s == "[]":
+                    continue
+                # 跳过内部文书ID(did1.xxx)/URL/超长连续串(2026-09-07: 海尔画像报告示例乱码修复)
+                if re.match(r"^did1?[.\w-]{20,}", s) or re.match(r"^https?://", s) \
+                        or re.match(r"^[\w-]{40,}$", s):
+                    continue
+                parts.append(s)
                 if len(parts) >= 3:
                     break
             return "；".join(parts)[:n] if parts else ""

@@ -397,12 +397,16 @@ async def profile_query(req: ProfileQueryRequest, user: User = Depends(get_curre
         logger.exception("debtor profile query failed for %s", company)
         return {"ok": False, "error": f"企查查查询失败：{e}"}
 
-    reg_ok = (result.get("biz") or {}).get("get_company_registration_info", {}).get("ok")
-    if not reg_ok:
+    # 2026-09-08 修复(与线索同款): 企查查对不存在主体返回"ok 但 data 无企业名称",
+    # 须同时校验 data 含非空"企业名称", 防止生成空壳画像报告并白扣积分。
+    reg = (result.get("biz") or {}).get("get_company_registration_info", {}) or {}
+    reg_d = reg.get("data") if reg.get("ok") else None
+    reg_name = (reg_d or {}).get("企业名称") if isinstance(reg_d, dict) else None
+    if not (reg.get("ok") and str(reg_name or "").strip()):
         # 查无此名 → 提示可能自然人/名称不符
         return {"ok": False,
                 "error": "未在企查查查询到该名称的企业登记信息。可能原因：①名称输入不完整或非工商全称 "
-                         "（曾用名/简称请先用工商全称）②该名称更像自然人。请核对后重试。"}
+                         "（曾用名/简称请先用工商全称）②该名称更像自然人③企业不存在或名称有误。请核对后重试。"}
 
     sections = _build_sections(result)
     summary = _summary_of(result)

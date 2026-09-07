@@ -564,11 +564,16 @@ async def clue_query_report(req: ClueQueryRequest, user: User = Depends(get_curr
         logger.exception("clue report query failed for %s", company)
         return {"ok": False, "error": f"企查查查询失败：{e}"}
 
-    reg_ok = (result.get("biz") or {}).get("get_company_registration_info", {}).get("ok")
-    if not reg_ok:
+    # 2026-09-08 修复: 企查查对不存在的名称返回"成功但 data 无企业名称"——
+    # 只查 ok 会放行空壳主体, 生成全空报告并白扣积分(青岛海尔地产 03:10 案例)。
+    # 须同时满足: 接口 ok 且 data 含非空"企业名称"(更名场景返回现名, 同样非空)。
+    reg = (result.get("biz") or {}).get("get_company_registration_info", {}) or {}
+    reg_d = reg.get("data") if reg.get("ok") else None
+    reg_name = (reg_d or {}).get("企业名称") if isinstance(reg_d, dict) else None
+    if not (reg.get("ok") and str(reg_name or "").strip()):
         return {"ok": False,
                 "error": "未在企查查查询到该名称的企业登记信息。可能原因：①名称输入不完整或非工商全称"
-                         "（曾用名/简称请先用工商全称）②该名称更像自然人。请核对后重试。"}
+                         "（曾用名/简称请先用工商全称）②该名称更像自然人③企业不存在或名称有误。请核对后重试。"}
 
     # 无形资产 7 工具（2026-09-06 用户拍板：财产线索报告「无形资产」章节）
     # 独立查询不给 query_property_clues 旧调用方(名称解析/旧案件流程)背成本；

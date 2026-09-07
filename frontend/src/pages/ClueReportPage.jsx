@@ -103,11 +103,15 @@ export default function ClueReportPage() {
             {kvs.length > 0 && (
               <Descriptions column={{ xs: 1, md: 2 }} size="small" bordered style={{ marginBottom: 12 }}
                 labelStyle={{ width: 130, background: 'var(--bg-soft, #F7F9FC)' }}>
-                {kvs.map(([k, v], j) => (
-                  <Descriptions.Item key={j} label={k} span={k === '经营范围' ? 2 : undefined}>
-                    <span style={{ whiteSpace: 'pre-wrap' }}>{v || '—'}</span>
-                  </Descriptions.Item>
-                ))}
+                {kvs.map(([k, v], j) => {
+                  // 长文本(≥18个汉字)跨整行, 避免窄列竖排(2026-09-08 用户反馈列宽/竖排难看)
+                  const cjkLen = String(v || '').replace(/[^\u4e00-\u9fa5]/g, '').length
+                  return (
+                    <Descriptions.Item key={j} label={k} span={cjkLen >= 18 ? 2 : undefined}>
+                      <span style={{ whiteSpace: 'pre-wrap' }}>{v || '—'}</span>
+                    </Descriptions.Item>
+                  )
+                })}
               </Descriptions>
             )}
             {tables.map((tb, ti) => (

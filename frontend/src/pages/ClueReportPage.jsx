@@ -100,20 +100,36 @@ export default function ClueReportPage() {
         const tables = sec.tables || []
         return (
           <Card key={i} size="small" style={{ marginBottom: 16 }} title={<Text strong style={{ fontSize: 15 }}>{sec.h}</Text>}>
-            {kvs.length > 0 && (
-              <Descriptions column={{ xs: 1, md: 2 }} size="small" bordered style={{ marginBottom: 12 }}
-                labelStyle={{ width: 130, background: 'var(--bg-soft, #F7F9FC)' }}>
-                {kvs.map(([k, v], j) => {
-                  // 长文本(≥18个汉字)跨整行, 避免窄列竖排(2026-09-08 用户反馈列宽/竖排难看)
-                  const cjkLen = String(v || '').replace(/[^\u4e00-\u9fa5]/g, '').length
-                  return (
-                    <Descriptions.Item key={j} label={k} span={cjkLen >= 18 ? 2 : undefined}>
-                      <span style={{ whiteSpace: 'pre-wrap' }}>{v || '—'}</span>
-                    </Descriptions.Item>
-                  )
-                })}
-              </Descriptions>
-            )}
+            {kvs.length > 0 && (() => {
+              // 2026-09-08 用户建议: 长文本(≥18汉字, 如经营范围/注册地址)单独整行展示,
+              // 不放进双列表格, 避免撑宽整列压窄其它列(公司名称曾因此竖排每字一行)
+              const isLong = (v) => String(v || '').replace(/[^\u4e00-\u9fa5]/g, '').length >= 18
+              const shorts = kvs.filter(([, v]) => !isLong(v))
+              const longs = kvs.filter(([, v]) => isLong(v))
+              return (
+                <>
+                  {shorts.length > 0 && (
+                    <Descriptions column={{ xs: 1, md: 2 }} size="small" bordered style={{ marginBottom: 12 }}
+                      labelStyle={{ width: 130, background: 'var(--bg-soft, #F7F9FC)' }}>
+                      {shorts.map(([k, v], j) => (
+                        <Descriptions.Item key={j} label={k}>
+                          <span style={{ whiteSpace: 'pre-wrap' }}>{v || '—'}</span>
+                        </Descriptions.Item>
+                      ))}
+                    </Descriptions>
+                  )}
+                  {longs.map(([k, v], j) => (
+                    <Descriptions key={`l${j}`} column={1} size="small" bordered
+                      style={{ marginBottom: longs.length - 1 === j ? 12 : 4 }}
+                      labelStyle={{ width: 130, background: 'var(--bg-soft, #F7F9FC)' }}>
+                      <Descriptions.Item label={k}>
+                        <span style={{ whiteSpace: 'pre-wrap' }}>{v || '—'}</span>
+                      </Descriptions.Item>
+                    </Descriptions>
+                  ))}
+                </>
+              )
+            })()}
             {tables.map((tb, ti) => (
               <Table key={ti} size="small" bordered pagination={false} style={{ marginBottom: 12 }}
                 scroll={{ x: 'max-content' }}

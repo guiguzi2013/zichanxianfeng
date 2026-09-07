@@ -337,7 +337,8 @@ def _build_ipr_sections(result: dict) -> list[dict]:
         shown = len(records) if isinstance(records, list) else None
         overview_kvs.append([label, f"{total if total > 0 else (shown or 0)} 条"])
         detail_dims.append((tool, label, data, records, total))
-    sec = {"h": "无形资产", "kvs": _kv(overview_kvs), "tables": [], "note": None}
+    sec = {"h": "无形资产", "kvs": _kv(overview_kvs), "tables": [], "note": None,
+           "note_slot": "ipr_overview"}  # note_slot: 渲染端忽略; 供 LLM 律师式润色(advice_writer)
     if overview_kvs:
         sec["note"] = ("以上为对企业无形资产的核验结果。存在记录的维度详见下文各节及其处置提示; "
                        "未发现记录的维度说明暂未检索到对应无形资产(不排除线下存在未公示登记, "
@@ -351,7 +352,8 @@ def _build_ipr_sections(result: dict) -> list[dict]:
             tb = _ipr_service_table(data)
             n_sub = sum(len(v) for v in (data.get("网络服务备案信息") or {}).values() if isinstance(v, list))
             secs.append({"h": h, "kvs": [], "tables": [tb] if tb.get("rows") else [],
-                         "note": f"{note} 该企业共 {n_sub} 项备案。" if note else None})
+                         "note": f"{note} 该企业共 {n_sub} 项备案。" if note else None,
+                         "note_slot": f"ipr_{tool}"})
             continue
         tb = _ipr_detail_table(tool, records) if records else None
         if total > 0 and total > (len(tb.get("rows") or []) if tb else 0) and note:
@@ -359,7 +361,7 @@ def _build_ipr_sections(result: dict) -> list[dict]:
         elif total > 0 and note:
             note = f"{note} 该企业共 {total} 条记录。"
         secs.append({"h": h, "kvs": [], "tables": [tb] if tb and tb.get("rows") else [],
-                     "note": note})
+                     "note": note, "note_slot": f"ipr_{tool}"})
     return secs
 
 
@@ -499,7 +501,7 @@ def _build_claimant_sections(result: dict) -> list[dict]:
         "③将胜诉回款纳入受偿预期统筹评估, 与既有债权执行统筹安排。"
     )
     sec = {"h": "权利主张案件", "kvs": [], "tables": [],
-           "note": note}
+           "note": note, "note_slot": "claimant"}
     if table_rows:
         sec["tables"].append(_table(["案号", "本企业身份", "案件状态", "法院/公告机关", "日期", "来源"], table_rows))
     return [sec]
@@ -763,7 +765,8 @@ def build_sections(result: dict) -> list[dict]:
     secs.extend(_build_claimant_sections(result))
 
     # 六、追索分析与建议
-    sec5 = {"h": "追索分析与建议", "kvs": [], "tables": [], "note": None}
+    # note_slot=recovery_intro: AI 润色后填 AI 引言(表格分级保留); 无 AI 结果则 note=None 不显示
+    sec5 = {"h": "追索分析与建议", "kvs": [], "tables": [], "note": None, "note_slot": "recovery_intro"}
     advice = analyze_recovery(result)
     rows = [[{"high": "优先处置", "medium": "需关注", "info": "建议动作"}.get(a.get("level"), ""), a.get("text")] for a in advice]
     if rows:

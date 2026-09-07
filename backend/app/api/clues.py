@@ -590,6 +590,15 @@ async def clue_query_report(req: ClueQueryRequest, user: User = Depends(get_curr
     summary = build_summary(result)
     queried_at = result.get("queried_at") or datetime.now().strftime("%Y-%m-%d")
 
+    # AI 律师式润色(2026-09-08 用户拍板): 分析段落基于查询结果差异化表达;
+    # 失败/超时/演示模式自动保留模板文案(报告不受影响)
+    try:
+        from ..services.advice_writer import build_context, polish_report
+        ctx = build_context(result)
+        sections = await polish_report(sections, ctx)
+    except Exception:  # noqa: BLE001
+        logger.exception("clue report polish failed for %s", company)
+
     # 落库
     settings = get_settings()
     db = SessionLocal()

@@ -296,7 +296,8 @@ def _build_sections(result: dict) -> list:
     sections.append(sec5)
 
     # 七、司法与合规风险（只扫不钻 2026-09-04：risk_scan 命中清单；示例仅复用缓存已有明细，零积分）
-    sec7 = {"h": "司法与合规风险", "kvs": [], "tables": []}
+    # note_slot=judicial_overview(2026-09-08): AI 律师式概述(有命中时润色), 无 AI 结果则 None 不显示
+    sec7 = {"h": "司法与合规风险", "kvs": [], "tables": [], "note": None, "note_slot": "judicial_overview"}
     hits = risk.get("hits") or []
     if not hits:
         sec7["kvs"].append(["风险记录", "经全维度扫描，未发现失信/被执行/限高/终本/冻结/涉诉等记录。"])
@@ -406,6 +407,13 @@ async def profile_query(req: ProfileQueryRequest, user: User = Depends(get_curre
     sections = _build_sections(result)
     summary = _summary_of(result)
     queried_at = result.get("queried_at") or datetime.now().strftime("%Y-%m-%d")
+
+    # AI 律师式润色(2026-09-08): 司法与合规风险 AI 概述; 失败/演示模式保留模板
+    try:
+        from ..services.advice_writer import build_context, polish_report
+        sections = await polish_report(sections, build_context(result))
+    except Exception:  # noqa: BLE001
+        logger.exception("debtor profile polish failed for %s", company)
 
     # 落库（先拿 id 生成编号/文件名）
     settings = get_settings()

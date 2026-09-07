@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Layout, Menu, Button, Dropdown, Avatar } from 'antd'
+import { Layout, Menu, Button, Dropdown, Avatar, message } from 'antd'
 import { UserOutlined, LogoutOutlined, MenuOutlined, UnorderedListOutlined, FileTextOutlined, SettingOutlined, IdcardOutlined } from '@ant-design/icons'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
@@ -41,8 +41,9 @@ export default function AppHeader() {
     items: userMenuItems,
     onClick: ({ key }) => {
       if (key === 'logout') {
+        // 2026-09-07 用户拍板：退出登录不跳登录页，留在当前页(未登录浏览态)
         logout()
-        navigate('/login')
+        message.success('已退出登录')
       } else if (key === 'tasks') navigate('/tasks')
       else if (key === 'reports') navigate('/tasks?tab=reports')
       else if (key === 'profile') navigate('/tasks?tab=profile')

@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { Button, Result } from 'antd'
 import { Layout } from 'antd'
 import AppHeader from './components/AppHeader'
 import AppFooter from './components/AppFooter'
@@ -32,14 +33,36 @@ import { useAuthStore } from './store/auth'
 
 const { Content } = Layout
 
+// 未登录占位页(2026-09-07 用户拍板: 超时/退出不再强制跳登录页, 留在原 URL,
+// 受保护页显示"请登录"占位, 公开页照常浏览——像未登录直接访问网站的状态)
+function LoginGate({ hint }) {
+  const location = useLocation()
+  const navigate = useNavigate()
+  return (
+    <div style={{ padding: '60px 16px' }}>
+      <Result
+        status="warning"
+        title="该内容需要登录后使用"
+        subTitle={hint || '登录后可查看与使用，登录成功将自动回到本页。'}
+        extra={
+          <Button type="primary" size="large"
+            onClick={() => navigate('/login', { state: { from: location.pathname + location.search } })}>
+            去登录
+          </Button>
+        }
+      />
+    </div>
+  )
+}
+
 // 登录守卫：普通用户访问前台用户功能；员工（editor/admin）无用户功能，重定向管理后台
 // 2026-09-05：未登录跳 /login 时携带来源路径 state.from，登录成功后回原页
+// 2026-09-07：未登录不再强制跳转登录页——渲染 LoginGate 占位(保留原 URL)
 function RequireAuth({ children }) {
   const token = useAuthStore((s) => s.token)
   const user = useAuthStore((s) => s.user)
-  const location = useLocation()
   if (!token) {
-    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />
+    return <LoginGate />
   }
   if (user?.role === 'editor' || user?.role === 'admin') return <Navigate to="/admin" replace />
   return children
@@ -70,12 +93,12 @@ function RequireAdmin({ children }) {
 }
 
 // 报告页守卫：普通用户（看自己的）或员工/管理员（后台查看用户报告）均可
+// 2026-09-07：未登录不强制跳登录页 → LoginGate 占位(报告 URL 公开可浏览时也提示登录)
 function RequireReportView({ children }) {
   const token = useAuthStore((s) => s.token)
   const user = useAuthStore((s) => s.user)
-  const location = useLocation()
   if (!token) {
-    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />
+    return <LoginGate hint="报告属个人资料，登录后可查看与下载。" />
   }
   if (user?.role === 'admin' || user?.role === 'editor') return children
   return children
@@ -104,8 +127,8 @@ export default function App() {
             <Route path="/task/:taskId/edit" element={<RequireAuth><TaskClaimsPage /></RequireAuth>} />
             <Route path="/property-clues" element={<PropertyCluesPage />} />
             <Route path="/debtor-profile" element={<DebtorProfilePage />} />
-            <Route path="/debtor-report/:id" element={<DebtorReportPage />} />
-            <Route path="/clue-report/:id" element={<ClueReportPage />} />
+            <Route path="/debtor-report/:id" element={<RequireReportView><DebtorReportPage /></RequireReportView>} />
+            <Route path="/clue-report/:id" element={<RequireReportView><ClueReportPage /></RequireReportView>} />
             <Route path="/debts" element={<DebtListPage />} />
             <Route path="/notices" element={<NoticeListPage />} />
             <Route path="/search" element={<SearchPage />} />

@@ -18,7 +18,7 @@ export default function DebtorReportPage() {
   const [dl, setDl] = useState(false)
 
   useEffect(() => {
-    if (!token) { navigate('/login', { state: { from: window.location.pathname + window.location.search } }); return }
+    if (!token) return // 路由守卫已渲染"请登录"占位(2026-09-07 不再整页跳登录)
     debtorProfileApi.detail(id)   // 后端返回 {ok, report}
       .then((resp) => { if (resp?.ok && resp.report) setReport(resp.report); else message.error(resp?.error || '报告不存在') })
       .catch(() => {})

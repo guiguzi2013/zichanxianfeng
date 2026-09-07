@@ -109,10 +109,10 @@ def build_context(result: dict) -> str:
     reg = (biz.get("get_company_registration_info") or {}).get("data") or {}
     if isinstance(reg, dict):
         lines.append(f"登记状态: {reg.get('登记状态') or '—'}; 注册资本: {reg.get('注册资本') or '—'}")
-    # 司法命中
+    # 司法命中(画像 result 已有 risk.hits; 线索 result 无 hits → 从 scan 提取)
     risk = result.get("risk") or {}
-    hits = risk.get("hits") or []
-    if isinstance(risk.get("scan"), dict):
+    hits = list(risk.get("hits") or [])
+    if not hits and isinstance(risk.get("scan"), dict):
         sd = risk["scan"].get("data") or {}
         for f in (sd.get("风险因子扫描") or [])[:18]:
             if isinstance(f, dict) and (f.get("条目数") or 0) > 0:

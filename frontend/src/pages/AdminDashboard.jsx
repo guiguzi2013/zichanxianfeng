@@ -290,16 +290,16 @@ export default function AdminDashboard() {
               { title: '积分', dataIndex: 'points', width: 80 },
               { title: '注册时间', dataIndex: 'created_at', render: (v) => (v ? String(v).replace('T', ' ').slice(0, 16) : '—') },
               {
-                title: '最后上线时间', dataIndex: 'last_login_at', width: 150,
+                title: '最后上线时间', dataIndex: 'last_login_at', width: 170,
                 render: (v, r) => {
                   if (!v) return <span style={{ color: 'var(--text-weak)' }}>从未登录</span>
-                  const login = new Date(v)
-                  const logout = r.last_logout_at ? new Date(r.last_logout_at) : null
-                  const online = !logout || login.getTime() > logout.getTime()
+                  // 2026-09-08: 在线由后端心跳判定(10分钟内活跃), 不再用"登录>登出"猜测
                   return (
                     <Space direction="vertical" size={0}>
                       <span>{String(v).replace('T', ' ').slice(0, 16)}</span>
-                      {online && <Tag color="green" style={{ marginTop: 2 }}>在线</Tag>}
+                      {r.online
+                        ? <Tag color="green" style={{ marginTop: 2 }}>在线{r.active_at ? `（${String(r.active_at).replace('T', ' ').slice(5, 16)}活跃）` : ''}</Tag>
+                        : (r.last_logout_at && <span style={{ fontSize: 12, color: 'var(--text-weak)' }}>最后活跃 {String(r.last_logout_at).replace('T', ' ').slice(5, 16)}</span>)}
                     </Space>
                   )
                 },
@@ -307,10 +307,7 @@ export default function AdminDashboard() {
               {
                 title: '今日在线时间', dataIndex: 'today_online_seconds', width: 130,
                 render: (v, r) => {
-                  const login = r.last_login_at ? new Date(r.last_login_at) : null
-                  const logout = r.last_logout_at ? new Date(r.last_logout_at) : null
-                  const online = login && (!logout || login.getTime() > logout.getTime())
-                  return online
+                  return r.online
                     ? <Tag color="green">{formatSeconds(v)}（进行中）</Tag>
                     : <span>{formatSeconds(v)}</span>
                 },

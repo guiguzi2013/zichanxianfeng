@@ -43,8 +43,19 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
     from ..models import LoginSession
     db.add(LoginSession(user_id=user.id, login_at=datetime.now()))
     db.commit()
+    from ..services.heartbeat import mark_active  # 2026-09-08: 登录即活跃(心跳在线判定)
+    mark_active(user.id)
     token = create_access_token(user.id, user.username, user.role)
     return ok(TokenOut(access_token=token, user=UserOut.model_validate(user)).model_dump(), "登录成功")
+
+
+@router.post("/heartbeat", response_model=ApiResponse)
+def heartbeat(user: User = Depends(get_current_user)):
+    """在线心跳(2026-09-08 用户批准): 前端可见时每 5 分钟静默上报, 内存记录, 无磁盘写。
+    10 分钟无心跳 → 后台判定离线(关闭页面/切后台/离开即停)。"""
+    from ..services.heartbeat import mark_active
+    mark_active(user.id)
+    return ok(None)
 
 
 @router.post("/logout", response_model=ApiResponse)
@@ -54,6 +65,9 @@ def logout(user: User = Depends(get_current_user), db: Session = Depends(get_db)
     from ..models import LoginSession
 
     user.last_logout_at = datetime.now()
+    # 2026-09-08: 登出即清除心跳活跃标记(不再显示在线)
+    from ..services.heartbeat import clear_active
+    clear_active(user.id)
     # 关闭该用户最近一条未登出的会话（正常一次登录一条；多端登录则只关最近一条）
     open_sess = db.scalar(
         select(LoginSession).where(LoginSession.user_id == user.id, LoginSession.logout_at.is_(None))

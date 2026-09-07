@@ -100,6 +100,7 @@ def get_stats(admin: User = Depends(require_editor), db: Session = Depends(get_d
 def list_users(admin: User = Depends(require_editor), db: Session = Depends(get_db)):
     from datetime import datetime as _dt
     from ..models import LoginSession
+    from ..services.heartbeat import is_online, last_active_dt
 
     # 今日 00:00（自然日）
     now = _dt.now()
@@ -109,13 +110,21 @@ def list_users(admin: User = Depends(require_editor), db: Session = Depends(get_
     ).all()
 
     def today_online_seconds(user_id: int) -> int:
-        """今日在线时长：该用户今天所有会话与今日相交时长的累加（未登出按当前时间计）"""
+        """今日在线时长：会话与今日相交时长的累加。
+        2026-09-08 心跳版：未登出会话的截止点 = 最近心跳时刻(僵尸挂机不再无限累计);
+        无心跳历史会话(旧页面)截止于登录时刻。"""
         total = 0
+        active_dt = last_active_dt(user_id)
         for (s,) in sessions:
             if s.user_id != user_id:
                 continue
             start = s.login_at if s.login_at >= day_start else day_start
-            end = s.logout_at or now
+            if s.logout_at:
+                end = s.logout_at
+            elif active_dt and active_dt > s.login_at:
+                end = active_dt
+            else:
+                end = s.login_at  # 无心跳的挂机会话: 不累计
             if end > start:
                 total += int((end - start).total_seconds())
         return total
@@ -133,6 +142,9 @@ def list_users(admin: User = Depends(require_editor), db: Session = Depends(get_
                 "created_at": u.created_at.isoformat() if u.created_at else None,
                 "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
                 "last_logout_at": u.last_logout_at.isoformat() if u.last_logout_at else None,
+                # 2026-09-08: 真实在线(最近10分钟有心跳)与最后活跃时刻
+                "online": is_online(u.id),
+                "active_at": (d.isoformat() if (d := last_active_dt(u.id)) else None),
                 "today_online_seconds": today_online_seconds(u.id),
             }
             for u in users
@@ -168,16 +180,24 @@ def list_user_sessions(
         .order_by(LoginSession.id.desc()).offset(offset).limit(limit)
     ).all()
     now = _dt.now()
+    from ..services.heartbeat import is_online as _hb_online, last_active_dt as _hb_active
+    active_dt = _hb_active(user_id)
     out = []
     for s in sessions:
         login = s.login_at
         logout = s.logout_at or now
-        online = s.logout_at is None
+        # 2026-09-08: 未登出会话是否真在线由心跳判定; 时长截止最近心跳(挂机不再累计)
+        if s.logout_at is None:
+            online = _hb_online(user_id)
+            end = active_dt if (active_dt and active_dt > login) else login
+        else:
+            online = False
+            end = s.logout_at
         out.append({
             "id": s.id,
             "login_at": login.isoformat() if login else None,
             "logout_at": s.logout_at.isoformat() if s.logout_at else None,
-            "duration_seconds": int((logout - login).total_seconds()) if login and logout > login else 0,
+            "duration_seconds": int((end - login).total_seconds()) if login and end > login else 0,
             "online": online,
         })
     return ok({

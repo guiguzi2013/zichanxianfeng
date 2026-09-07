@@ -5,6 +5,7 @@ import AppHeader from './components/AppHeader'
 import AppFooter from './components/AppFooter'
 import MobileTabbar from './components/MobileTabbar'
 import IdleTimeout from './components/IdleTimeout'
+import Heartbeat from './components/Heartbeat'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import AdminLoginPage from './pages/AdminLoginPage'
@@ -110,6 +111,7 @@ export default function App() {
       <Layout style={{ minHeight: '100vh', background: 'var(--bg-page)' }}>
         <AppHeader />
         <IdleTimeout />
+        <Heartbeat />
         <Content style={{ background: 'var(--bg-page)' }}>
           <Routes>
             <Route path="/login" element={<LoginPage />} />

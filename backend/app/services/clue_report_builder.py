@@ -671,7 +671,7 @@ def build_sections(result: dict) -> list[dict]:
         if isinstance(it, dict):
             inv_rows.append([_strip(it.get("被投资企业名称") or it.get("企业名称")),
                              _fmt(it.get("投资比例") or it.get("持股比例")),
-                             _fmt(it.get("投资金额") or it.get("认缴出资额")),
+                             _fmt(it.get("投资金额") or it.get("认缴出资额") or it.get("认缴出资额/持股数")),
                              _strip(it.get("登记状态") or it.get("状态"))])
     if inv_rows:
         sec2["tables"].append(_table(["对外投资企业", "投资比例", "投资金额", "状态"], inv_rows[:30]))

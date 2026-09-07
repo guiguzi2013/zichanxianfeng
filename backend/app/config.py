@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     # 材料识别/长文本任务（多文件合并可达数万字符）需更长超时，避免 60s 掐断+重试造成"卡死"观感
     llm_timeout_seconds: int = 300
     llm_max_retries: int = 1
+    # 2026-09-08: 显式输出上限。deepseek-chat 不传 max_tokens 时默认仅 4096，
+    # 材料识别 JSON 输出超 4096 token 即被截断 → "Unterminated string ... char 27291" 报错(朋友远程实测)。
+    # deepseek-chat 最大支持 8192 输出 token，置顶后截断概率大降。
+    llm_max_tokens: int = 8192
     # mock 模式：无 API Key 时用预设数据跑通全流程（验收/演示用），生产关闭
     # 默认 True：没有 .env 时开箱即用；配置了 DEEPSEEK_API_KEY 后可在 .env 设 LLM_MOCK=false 走真实模型
     llm_mock: bool = True

@@ -19,6 +19,19 @@ from .deps import get_current_user
 
 router = APIRouter(prefix="/claims", tags=["claims"])
 
+# 2026-09-08: LLM 识别错误 → 面向使用者的友好文案(原始技术异常只进日志, 不上界面)
+_LLM_TECH_RE = re.compile(
+    r"Unterminated string|Expecting value|JSONDecodeError|extra data|truncat|invalid json|non-object|Empty reply|timed out|超时",
+    re.I,
+)
+
+
+def _friendly_llm_error(e: BaseException) -> str:
+    s = str(e)
+    if _LLM_TECH_RE.search(s):
+        return "材料已读取，但 AI 分析未能完成（材料较长或内容较复杂）。可点击「重试识别」，或拆分上传、精简材料后重试。"
+    return "材料已读取，但 AI 识别失败。可点击「重试识别」再试一次。"
+
 
 def _claim_to_out(claim: Claim) -> ClaimOut:
     """ORM → Pydantic。missing_fields/extra_fields 在 DB 里是 JSON 字符串，
@@ -89,7 +102,9 @@ async def import_text(req: ImportTextRequest, user: User = Depends(get_current_u
     try:
         fields = await extract_from_text(req.text)
     except LLMError as e:
-        raise err(str(e))
+        import logging
+        logging.getLogger(__name__).warning("import-text LLM error: %s", e)
+        raise err(_friendly_llm_error(e))
     # 批量粘贴去重：同名债务人只保留第一条（用户确认：剔除重复，其余继续）
     seen: set[str] = set()
     dedup_fields = []
@@ -202,8 +217,10 @@ async def _run_doc_job(job_id: str, user_id: int, paths: list[tuple[str, str, st
             ignored_files = doc_result.get("ignored_files") or []
             file_classes = doc_result.get("file_classes") or []
         except LLMError as e:
+            import logging
+            logging.getLogger(__name__).exception("doc material LLM error for job %s", job_id)
             DOC_JOBS[job_id]["status"] = "error"
-            DOC_JOBS[job_id]["error"] = f"材料已读取但识别失败：{e}"
+            DOC_JOBS[job_id]["error"] = _friendly_llm_error(e)
             return
 
         # 3) 去重 + 落库
@@ -251,7 +268,7 @@ async def _run_doc_job(job_id: str, user_id: int, paths: list[tuple[str, str, st
     except Exception as e:  # noqa: BLE001
         import logging as _logging
         _logging.getLogger(__name__).exception("doc job %s failed", job_id)
-        DOC_JOBS[job_id] = {**DOC_JOBS[job_id], "status": "error", "error": f"识别过程出错：{e}"}
+        DOC_JOBS[job_id] = {**DOC_JOBS[job_id], "status": "error", "error": _friendly_llm_error(e)}
 
 
 @router.post("/import-doc", response_model=ApiResponse)

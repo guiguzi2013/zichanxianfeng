@@ -162,6 +162,8 @@ async def chat_json(system: str, user: str, temperature: float = 0.1) -> dict[st
         ],
         "temperature": temperature,
         "response_format": {"type": "json_object"},
+        # 2026-09-08: 显式 max_tokens(默认 4096 会截断长输出 JSON → Unterminated string 报错)
+        "max_tokens": settings.llm_max_tokens,
     }
     headers = {"Authorization": f"Bearer {settings.deepseek_api_key}"}
 
@@ -171,6 +173,15 @@ async def chat_json(system: str, user: str, temperature: float = 0.1) -> dict[st
             import httpx  # 延迟导入
 
             async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
+                # 重试提示: 上一轮输出疑似超长截断/非法 JSON → 提示模型压缩输出(字段可省略的省略, 关键字段必须保留)
+                msg_user = user
+                if attempt > 0:
+                    msg_user = (user + "\n\n[系统提醒] 上一轮输出因过长而中断。本轮请压缩 JSON 输出："
+                                       "仅输出必要字段，可省略空字段与空数组，确保一次输出完整闭合的 JSON。")
+                payload = {**payload, "messages": [
+                    {"role": "system", "content": system_full},
+                    {"role": "user", "content": msg_user},
+                ]}
                 resp = await client.post(
                     f"{settings.deepseek_base_url.rstrip('/')}/chat/completions",
                     json=payload,
@@ -181,7 +192,9 @@ async def chat_json(system: str, user: str, temperature: float = 0.1) -> dict[st
                 content = data["choices"][0]["message"]["content"]
                 # 统计 token（用于积分核算）
                 usage = data.get("usage", {})
-                logger.info("LLM tokens: prompt=%s completion=%s", usage.get("prompt_tokens"), usage.get("completion_tokens"))
+                logger.info("LLM tokens: prompt=%s completion=%s finish=%s",
+                            usage.get("prompt_tokens"), usage.get("completion_tokens"),
+                            data.get("choices", [{}])[0].get("finish_reason"))
                 obj = json.loads(content)
                 if isinstance(obj, dict):
                     return obj

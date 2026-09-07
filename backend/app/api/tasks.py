@@ -181,6 +181,8 @@ def save_only(req: TaskCreate, user: User = Depends(get_current_user), db: Sessi
 def start_task(task_id: int, background: BackgroundTasks, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """对已保存（pending）任务启动尽调"""
     task = db.get(Task, task_id)
+    if task is not None and task.deleted_at is not None:
+        task = None  # 软删=不存在
     if task is None or task.user_id != user.id:
         raise err("任务不存在", http_status=404)
     if task.status not in ("pending", "failed"):
@@ -202,6 +204,8 @@ def retry_task(task_id: int, background: BackgroundTasks, user: User = Depends(g
 @router.get("/{task_id}", response_model=ApiResponse)
 def get_task(task_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     task = db.get(Task, task_id)
+    if task is not None and task.deleted_at is not None:
+        task = None  # 软删=不存在
     if task is None or task.user_id != user.id:
         raise err("任务不存在", http_status=404)
     return ok(_task_to_out(db, task).model_dump())
@@ -216,6 +220,8 @@ def get_task_claims(task_id: int, user: User = Depends(get_current_user), db: Se
     from ..api.claims import _claim_to_out
 
     task = db.get(Task, task_id)
+    if task is not None and task.deleted_at is not None:
+        task = None  # 软删=不存在
     if task is None or task.user_id != user.id:
         raise err("任务不存在", http_status=404)
 
@@ -229,7 +235,8 @@ def get_task_claims(task_id: int, user: User = Depends(get_current_user), db: Se
 
     # 用户所有报告（找每个债权对应哪个任务的报告，供前端"查看"跳转）
     all_reports = db.scalars(
-        select(Report).join(Task).where(Task.user_id == user.id)
+        select(Report).join(Task).where(Task.user_id == user.id, Task.deleted_at.is_(None),
+                                        Report.deleted_at.is_(None))
     ).all()
     claim_report_task: dict[int, tuple[int, int]] = {}  # claim_id -> (task_id, report_id)（最近一份报告）
     for rp in sorted(all_reports, key=lambda x: x.created_at or _dt.min, reverse=True):
@@ -259,5 +266,6 @@ def get_task_claims(task_id: int, user: User = Depends(get_current_user), db: Se
 
 @router.get("", response_model=ApiResponse)
 def list_tasks(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    tasks = db.scalars(select(Task).where(Task.user_id == user.id).order_by(Task.id.desc())).all()
+    tasks = db.scalars(select(Task).where(Task.user_id == user.id,
+                                          Task.deleted_at.is_(None)).order_by(Task.id.desc())).all()
     return ok({"tasks": [_task_to_out(db, t).model_dump() for t in tasks]})

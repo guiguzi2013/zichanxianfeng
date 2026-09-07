@@ -385,7 +385,8 @@ async def profile_query(req: ProfileQueryRequest, user: User = Depends(get_curre
     db0 = SessionLocal()
     try:
         existed = db0.query(QccProfile).filter(QccProfile.user_id == user.id,
-                                               QccProfile.company == company).first()
+                                               QccProfile.company == company,
+                                               QccProfile.deleted_at.is_(None)).first()
         if existed:
             return {"ok": False, "error": "该企业的画像报告已存在，请在「我的报告」中查看（可重复下载）。"}
     finally:
@@ -480,7 +481,8 @@ async def profile_query(req: ProfileQueryRequest, user: User = Depends(get_curre
 def profile_history(user: User = Depends(get_current_user)):
     db = SessionLocal()
     try:
-        rows = db.query(QccProfile).filter(QccProfile.user_id == user.id).order_by(QccProfile.id.desc()).limit(100).all()
+        rows = db.query(QccProfile).filter(QccProfile.user_id == user.id,
+                                           QccProfile.deleted_at.is_(None)).order_by(QccProfile.id.desc()).limit(100).all()
         return {"ok": True, "list": [{
             "id": r.id, "company": r.company, "search_name": r.search_name,
             "queried_at": r.queried_at,
@@ -497,7 +499,7 @@ def profile_detail(rid: int, user: User = Depends(get_current_user)):
     db = SessionLocal()
     try:
         row = db.get(QccProfile, rid)
-        if row is None or (row.user_id != user.id and user.role not in ("admin", "editor")):
+        if row is None or row.deleted_at is not None or (row.user_id != user.id and user.role not in ("admin", "editor")):
             return {"ok": False, "error": "无权限或报告不存在"}
         content = json.loads(row.content or "{}")
         return {"ok": True, "report": {
@@ -518,7 +520,7 @@ def profile_download(rid: int, user: User = Depends(get_current_user)):
     db = SessionLocal()
     try:
         row = db.get(QccProfile, rid)
-        if row is None or (row.user_id != user.id and user.role not in ("admin", "editor")):
+        if row is None or row.deleted_at is not None or (row.user_id != user.id and user.role not in ("admin", "editor")):
             return {"ok": False, "error": "无权限或报告不存在"}
         if not row.pdf_path or not os.path.exists(row.pdf_path):
             return {"ok": False, "error": "PDF 尚未生成或文件已清理"}

@@ -25,3 +25,5 @@ class PropertyClueReport(Base):
     pdf_path: Mapped[str | None] = mapped_column(String(255))
     queried_at: Mapped[str | None] = mapped_column(String(20))       # 数据截至(企查查查询日)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    # 2026-09-08 回收站: 软删时间
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime)

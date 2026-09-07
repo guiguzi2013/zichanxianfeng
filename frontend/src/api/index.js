@@ -155,3 +155,13 @@ export const debtorProfileApi = {
   detail: (id) => client.get(`/debtor-profile/${id}`),
   downloadUrl: (id) => `/debtor-profile/${id}/download`,
 }
+
+// 回收站（2026-09-08 用户批准: 我的任务/报告删除→回收站, 恢复/重新生成/清空）
+export const trashApi = {
+  list: () => client.get('/trash/list'),
+  del: (kind, id) => client.post('/trash/delete', { kind, id }),
+  restore: (kind, id) => client.post('/trash/restore', { kind, id }),
+  regenerate: (kind, id) => client.post('/trash/regenerate', { kind, id }, { timeout: 600000 }),
+  clear: (kind, id) => client.post('/trash/clear', { kind, id }),
+  clearAll: () => client.post('/trash/clear-all'),
+}

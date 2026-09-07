@@ -18,3 +18,5 @@ class Report(Base):
     pdf_path: Mapped[str | None] = mapped_column(String(255))
     supplements: Mapped[str | None] = mapped_column(Text)  # JSON list
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    # 2026-09-08 回收站: 软删时间(为空=正常; 非空=已删可恢复/清空)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime)

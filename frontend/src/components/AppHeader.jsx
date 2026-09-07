@@ -46,7 +46,7 @@ export default function AppHeader() {
         message.success('已退出登录')
       } else if (key === 'tasks') navigate('/tasks')
       else if (key === 'reports') navigate('/tasks?tab=reports')
-      else if (key === 'profile') navigate('/tasks?tab=profile')
+      else if (key === 'profile') navigate('/account')
       else if (key === 'admin') navigate('/admin')
     },
   }

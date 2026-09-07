@@ -49,3 +49,36 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+# ---------- 轻量迁移：create_all 只建新表, 老表缺列在此补 ----------
+def ensure_schema():
+    """为既有表补齐新增列(2026-09-08 回收站 deleted_at 等)。幂等。"""
+    import sqlite3
+    from .config import get_settings as _gs
+    url = _gs().database_url
+    if not url.startswith("sqlite:///"):
+        return  # 非 sqlite 跳过(未来 Postgres 用正式迁移)
+    db_path = url.replace("sqlite:///", "", 1)
+    if db_path == ":memory:":
+        return
+    conn = sqlite3.connect(db_path, timeout=30)
+    try:
+        cur = conn.cursor()
+        additions = {
+            "reports": [("deleted_at", "DATETIME")],
+            "tasks": [("deleted_at", "DATETIME")],
+            "qcc_profiles": [("deleted_at", "DATETIME")],
+            "property_clue_reports": [("deleted_at", "DATETIME")],
+        }
+        for table, cols in additions.items():
+            try:
+                existing = {r[1] for r in cur.execute(f"PRAGMA table_info({table})")}
+                for name, decl in cols:
+                    if name not in existing:
+                        cur.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+            except Exception:
+                pass  # 表不存在等: 由 create_all 建全量
+        conn.commit()
+    finally:
+        conn.close()

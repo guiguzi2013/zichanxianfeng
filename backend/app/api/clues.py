@@ -548,7 +548,8 @@ async def clue_query_report(req: ClueQueryRequest, user: User = Depends(get_curr
     db0 = SessionLocal()
     try:
         existed = db0.query(PropertyClueReport).filter(
-            PropertyClueReport.user_id == user.id, PropertyClueReport.company == company).first()
+            PropertyClueReport.user_id == user.id, PropertyClueReport.company == company,
+            PropertyClueReport.deleted_at.is_(None)).first()
         if existed:
             return {"ok": False, "already": True,
                     "error": "该企业的财产线索报告已生成，请前往「我的报告」查看（可重复下载）。",
@@ -659,7 +660,7 @@ def clue_report_detail(rid: int, user: User = Depends(get_current_user)):
     db = SessionLocal()
     try:
         row = db.get(PropertyClueReport, rid)
-        if row is None or row.user_id != user.id:
+        if row is None or row.user_id != user.id or row.deleted_at is not None:
             return {"ok": False, "error": "报告不存在"}
         content = json.loads(row.content) if row.content else {}
         return {"ok": True, "report": {
@@ -683,7 +684,7 @@ def clue_report_download(rid: int, user: User = Depends(get_current_user)):
     db = SessionLocal()
     try:
         row = db.get(PropertyClueReport, rid)
-        if row is None or row.user_id != user.id:
+        if row is None or row.user_id != user.id or row.deleted_at is not None:
             raise err("报告不存在", http_status=404)
         if not row.pdf_path or not os.path.exists(row.pdf_path):
             raise err("PDF 尚未生成", http_status=404)

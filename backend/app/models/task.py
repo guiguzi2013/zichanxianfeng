@@ -21,3 +21,5 @@ class Task(Base):
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # 2026-09-08 回收站: 软删时间
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime)

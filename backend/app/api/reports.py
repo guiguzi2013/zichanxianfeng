@@ -43,7 +43,7 @@ def my_reports(user: User = Depends(get_current_user), db: Session = Depends(get
 
     rows = db.execute(
         select(Report, Task).join(Task, Report.task_id == Task.id)
-        .where(Task.user_id == user.id)
+        .where(Task.user_id == user.id, Task.deleted_at.is_(None), Report.deleted_at.is_(None))
         .order_by(Report.id.desc())
     ).all()
     out = []
@@ -69,7 +69,8 @@ def my_reports(user: User = Depends(get_current_user), db: Session = Depends(get
         })
     # 2026-09-04：债务人画像（企业速览）报告并入"我的报告"，可回看/重复下载
     from ..models import QccProfile
-    profiles = db.query(QccProfile).filter(QccProfile.user_id == user.id).order_by(QccProfile.id.desc()).all()
+    profiles = db.query(QccProfile).filter(QccProfile.user_id == user.id,
+                                           QccProfile.deleted_at.is_(None)).order_by(QccProfile.id.desc()).all()
     for p in profiles:
         out.append({
             "type": "profile",
@@ -82,7 +83,8 @@ def my_reports(user: User = Depends(get_current_user), db: Session = Depends(get
         })
     # 2026-09-06：财产线索单企业报告并入"我的报告"（重构后：查询即报告）
     from ..models import PropertyClueReport
-    clue_rows = db.query(PropertyClueReport).filter(PropertyClueReport.user_id == user.id) \
+    clue_rows = db.query(PropertyClueReport).filter(PropertyClueReport.user_id == user.id,
+                                                   PropertyClueReport.deleted_at.is_(None)) \
         .order_by(PropertyClueReport.id.desc()).all()
     for c in clue_rows:
         out.append({
@@ -120,13 +122,18 @@ def get_task_reports(task_id: int, user: User = Depends(get_current_user), db: S
     # 本人任务 或 管理后台（admin/editor 查看用户报告处理投诉）可读
     if task.user_id != user.id and user.role not in ("admin", "editor"):
         raise err("任务不存在", http_status=404)
-    reports = db.query(Report).filter(Report.task_id == task_id).all()
+    if task.deleted_at is not None:
+        raise err("任务不存在", http_status=404)
+    reports = db.query(Report).filter(Report.task_id == task_id,
+                                     Report.deleted_at.is_(None)).all()
     return ok({"reports": [_report_to_out(r) for r in reports]})
 
 
 @router.post("/{report_id}/pdf", response_model=ApiResponse)
 def generate_pdf(report_id: int, background: BackgroundTasks, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     report = db.get(Report, report_id)
+    if report is not None and report.deleted_at is not None:
+        report = None  # 2026-09-08 软删=不存在(回收站)
     if report is None:
         raise err("报告不存在", http_status=404)
     task = db.get(Task, report.task_id)
@@ -142,6 +149,8 @@ def _pdf_job(report_id: int):
     db = SessionLocal()
     try:
         report = db.get(Report, report_id)
+        if report is not None and report.deleted_at is not None:
+            report = None  # 2026-09-08 软删=不存在(回收站)
         if report is None or not report.content:
             return
         content = report.content
@@ -159,6 +168,8 @@ def _pdf_job(report_id: int):
 @router.get("/{report_id}/pdf/download")
 def download_pdf(report_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     report = db.get(Report, report_id)
+    if report is not None and report.deleted_at is not None:
+        report = None  # 2026-09-08 软删=不存在(回收站)
     if report is None or not report.pdf_path or not os.path.exists(report.pdf_path):
         raise err("PDF 尚未生成", http_status=404)
     task = db.get(Task, report.task_id)
@@ -188,6 +199,8 @@ async def upload_supplements(
     无论补充文字或文件，都会触发报告重新生成（结合原信息 + 补充信息）。
     """
     report = db.get(Report, report_id)
+    if report is not None and report.deleted_at is not None:
+        report = None  # 2026-09-08 软删=不存在(回收站)
     if report is None:
         raise err("报告不存在", http_status=404)
     task = db.get(Task, report.task_id)
@@ -271,6 +284,8 @@ async def upload_supplements(
 def list_report_versions(report_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """报告历史版本列表（元信息，不含全文）"""
     report = db.get(Report, report_id)
+    if report is not None and report.deleted_at is not None:
+        report = None  # 2026-09-08 软删=不存在(回收站)
     if report is None:
         raise err("报告不存在", http_status=404)
     task = db.get(Task, report.task_id)
@@ -295,6 +310,8 @@ def list_report_versions(report_id: int, user: User = Depends(get_current_user),
 def get_report_version(report_id: int, version: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """查看指定历史报告版本全文（可回退参考）"""
     report = db.get(Report, report_id)
+    if report is not None and report.deleted_at is not None:
+        report = None  # 2026-09-08 软删=不存在(回收站)
     if report is None:
         raise err("报告不存在", http_status=404)
     task = db.get(Task, report.task_id)
@@ -316,6 +333,8 @@ def get_report_version(report_id: int, version: int, user: User = Depends(get_cu
 def restore_report_version(report_id: int, version: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """回退到指定历史版本：当前内容先存档为新版本，再以目标版本内容覆盖当前报告"""
     report = db.get(Report, report_id)
+    if report is not None and report.deleted_at is not None:
+        report = None  # 2026-09-08 软删=不存在(回收站)
     if report is None:
         raise err("报告不存在", http_status=404)
     task = db.get(Task, report.task_id)
@@ -341,6 +360,8 @@ def restore_report_version(report_id: int, version: int, user: User = Depends(ge
 @router.put("/{report_id}/section-note", response_model=ApiResponse)
 def add_section_note(report_id: int, req: SectionNoteRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     report = db.get(Report, report_id)
+    if report is not None and report.deleted_at is not None:
+        report = None  # 2026-09-08 软删=不存在(回收站)
     if report is None:
         raise err("报告不存在", http_status=404)
     task = db.get(Task, report.task_id)

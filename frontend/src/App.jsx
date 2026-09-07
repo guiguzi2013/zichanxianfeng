@@ -27,6 +27,7 @@ import PropertyCluesPage from './pages/PropertyCluesPage'
 import ClueReportPage from './pages/ClueReportPage'
 import DebtorProfilePage from './pages/DebtorProfilePage'
 import DebtorReportPage from './pages/DebtorReportPage'
+import AccountPage from './pages/AccountPage'
 import DebtListPage from './pages/DebtListPage'
 import NoticeListPage from './pages/NoticeListPage'
 import SearchPage from './pages/SearchPage'
@@ -123,6 +124,7 @@ export default function App() {
             <Route path="/progress/:taskId" element={<RequireAuth><ProgressPage /></RequireAuth>} />
             <Route path="/report/:taskId/:reportId" element={<RequireReportView><ReportPage /></RequireReportView>} />
             <Route path="/tasks" element={<RequireAuth><TasksPage /></RequireAuth>} />
+            <Route path="/account" element={<RequireAuth><AccountPage /></RequireAuth>} />
             <Route path="/asset/:id" element={<AssetDetailPage />} />
             <Route path="/admin/feed" element={<RequireBackend><AdminFeedPage /></RequireBackend>} />
             <Route path="/valuation" element={<ValuationPage mode="industrial" />} />

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Card, Table, Tag, Button, Typography, Spin, message, Tabs, Descriptions, Space, Modal, Form, Input } from 'antd'
+import { Card, Table, Tag, Button, Typography, Spin, message, Tabs, Space, Modal, Popconfirm, Input } from 'antd'
+import { DeleteOutlined, RestOutlined, UndoOutlined, ReloadOutlined, UserOutlined } from '@ant-design/icons'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { taskApi, authApi, activityApi } from '../api'
+import { taskApi, activityApi, trashApi } from '../api'
 import client from '../api/client'
-import { useAuthStore } from '../store/auth'
 
 const { Title, Text } = Typography
 
@@ -14,45 +14,51 @@ const STATUS_META = {
   failed: { color: 'error', label: '失败' },
   partial: { color: 'warning', label: '部分完成' },
 }
+const KIND_META = {
+  task: { tag: 'blue', label: '尽调任务' },
+  report: { tag: 'green', label: '尽调报告' },
+  profile: { tag: 'geekblue', label: '企业速览' },
+  clue: { tag: 'orange', label: '财产线索' },
+}
 
 export default function TasksPage() {
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
-  const tab = params.get('tab') || 'tasks'
-  const { user } = useAuthStore()
+  const rawTab = params.get('tab')
+  const tab = ['tasks', 'reports', 'trash'].includes(rawTab) ? rawTab : 'tasks'
   const [tasks, setTasks] = useState([])
   const [valuations, setValuations] = useState([])
   const [clues, setClues] = useState([])
-  const [myReports, setMyReports] = useState([])   // 报告级列表（每份一行）
+  const [myReports, setMyReports] = useState([])
+  const [trashItems, setTrashItems] = useState([])
   const [loading, setLoading] = useState(true)
-  const [reportKeyword, setReportKeyword] = useState('')  // 2026-09-02 报告搜索
+  const [reportKeyword, setReportKeyword] = useState('')
 
-  // 2026-09-02：报告按 债务人/标题 过滤
   const rkw = reportKeyword.trim().toLowerCase()
   const filteredReports = rkw
     ? myReports.filter((r) => `${r.debtor_name || ''} ${r.title || ''}`.toLowerCase().includes(rkw))
     : myReports
 
-  // 任务原始表格弹窗
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const [t, v, c, r] = await Promise.all([
-          taskApi.list(),
-          activityApi.list('valuation'),
-          activityApi.list('clue'),
-          client.get('/reports/my/reports'),
-        ])
-        setTasks(t.data.tasks || [])
-        setValuations(v.data.records || [])
-        setClues(c.data.records || [])
-        setMyReports(r.data?.reports || [])
-      } catch { /* 拦截器已提示 */ } finally {
-        setLoading(false)
-      }
+  const loadAll = async () => {
+    try {
+      const [t, v, c, r, tr] = await Promise.all([
+        taskApi.list(),
+        activityApi.list('valuation'),
+        activityApi.list('clue'),
+        client.get('/reports/my/reports'),
+        trashApi.list(),
+      ])
+      setTasks(t.data.tasks || [])
+      setValuations(v.data.records || [])
+      setClues(c.data.records || [])
+      setMyReports(r.data?.reports || [])
+      setTrashItems(tr.data?.items || [])
+    } catch { /* 拦截器已提示 */ } finally {
+      setLoading(false)
     }
-    load()
-  }, [])
+  }
+
+  useEffect(() => { loadAll() }, [])
 
   const startDD = async (id) => {
     try {
@@ -62,12 +68,86 @@ export default function TasksPage() {
     } catch { /* 拦截器已提示 */ }
   }
 
+  // ---------- 删除(移入回收站) ----------
+  const delItem = async (kind, id, extra) => {
+    try {
+      await trashApi.del(kind, id)
+      message.success('已移入回收站（可恢复或清空）')
+      loadAll()
+    } catch (e) { message.error(e?.response?.data?.error || '删除失败') }
+  }
+
+  const openTrashUrl = (it) => {
+    if (it.kind === 'task') navigate('/tasks')  // 任务在任务页; 回收站内点名称回列表
+    if (it.kind === 'report') navigate(`/report/${it.task_id || ''}/${it.id}`)
+    if (it.kind === 'profile') navigate(`/debtor-report/${it.id}`)
+    if (it.kind === 'clue') navigate(`/clue-report/${it.id}`)
+  }
+
+  // ---------- 回收站操作 ----------
+  const doRestore = async (it) => {
+    try {
+      await trashApi.restore(it.kind, it.id)
+      message.success('已恢复')
+      loadAll()
+    } catch (e) { message.error(e?.response?.data?.error || '恢复失败') }
+  }
+  const doRegenerate = async (it) => {
+    const isQuery = it.kind === 'profile' || it.kind === 'clue'
+    Modal.confirm({
+      title: isQuery ? '重新生成将消耗查询积分' : '确认重新尽调？',
+      content: isQuery
+        ? '将重新查询企查查并生成最新报告，单次消耗数十积分（依企业数据量而定）。确认继续？'
+        : '将按原债权数据重新执行尽调并生成新版报告（已查过的数据走缓存）。确认继续？',
+      okText: '确认并重新生成',
+      okButtonProps: { danger: false },
+      onOk: async () => {
+        try {
+          message.info('正在重新生成，约需 1-3 分钟，请勿关闭页面…', 6)
+          await trashApi.regenerate(it.kind, it.id)
+          message.success('重新生成完成，已恢复到列表中')
+          loadAll()
+        } catch (e) { message.error(e?.response?.data?.error || '重新生成失败') }
+      },
+    })
+  }
+  const doClear = async (it) => {
+    Modal.confirm({
+      title: '彻底删除？',
+      content: `将从回收站彻底删除「${it.name}」（含已下载的 PDF），无法恢复。确认？`,
+      okText: '彻底删除',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await trashApi.clear(it.kind, it.id)
+          message.success('已彻底删除')
+          loadAll()
+        } catch (e) { message.error(e?.response?.data?.error || '删除失败') }
+      },
+    })
+  }
+  const doClearAll = () => {
+    if (!trashItems.length) return
+    Modal.confirm({
+      title: '清空回收站？',
+      content: `将彻底删除回收站中全部 ${trashItems.length} 条记录（含 PDF），无法恢复。确认？`,
+      okText: '清空全部',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await trashApi.clearAll()
+          message.success('回收站已清空')
+          loadAll()
+        } catch (e) { message.error(e?.response?.data?.error || '清空失败') }
+      },
+    })
+  }
+
+  // ---------- 表格列 ----------
   const taskColumns = [
     { title: '任务ID', dataIndex: 'id', width: 70 },
     {
-      title: '任务名称',
-      dataIndex: 'name',
-      ellipsis: true,
+      title: '任务名称', dataIndex: 'name', ellipsis: true,
       render: (v, r) => <Button type="link" style={{ padding: 0, height: 'auto', textAlign: 'left' }} onClick={() => navigate(`/task/${r.id}/edit`)}>{v || `任务#${r.id}`}</Button>,
     },
     { title: '债权数', dataIndex: 'claim_ids', width: 80, render: (v) => (Array.isArray(v) ? v.length : 0) },
@@ -76,11 +156,16 @@ export default function TasksPage() {
     { title: '进度', dataIndex: 'progress', width: 80, render: (v) => `${v}%` },
     { title: '创建时间', dataIndex: 'created_at', render: (v) => (v ? String(v).replace('T', ' ').slice(0, 16) : '—') },
     {
-      title: '操作', width: 100,
+      title: '操作', width: 150,
       render: (_, record) => (
-        record.status === 'pending'
-          ? <Button type="link" onClick={() => startDD(record.id)}>开始尽调</Button>
-          : null
+        <Space size={0}>
+          {record.status === 'pending'
+            ? <Button type="link" onClick={() => startDD(record.id)}>开始尽调</Button>
+            : <Button type="link" onClick={() => navigate(`/progress/${record.id}`)}>进度</Button>}
+          <Popconfirm title="移入回收站？将连带删除该任务的全部报告（可在回收站恢复）" onConfirm={() => delItem('task', record.id)}>
+            <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
+          </Popconfirm>
+        </Space>
       ),
     },
   ]
@@ -91,11 +176,9 @@ export default function TasksPage() {
     { title: '摘要', dataIndex: 'summary', render: (v) => v || '—' },
   ]
 
-  const doneTasks = tasks.filter((t) => t.status === 'done' || t.status === 'partial')
-  // 报告级列表：每份报告一行（含债务人画像/企业速览 2026-09-04），点哪行看哪份
   const reportColumns = [
     { title: '报告ID', dataIndex: 'report_id', width: 80, render: (v, r) => (r.type === 'profile' || r.type === 'clue' ? '—' : v) },
-    { title: '类型', dataIndex: 'type', width: 100, render: (v) => v === 'profile' ? <Tag color="blue">企业速览</Tag> : v === 'clue' ? <Tag color="orange">财产线索</Tag> : <Tag color="green">债权尽调</Tag> },
+    { title: '类型', dataIndex: 'type', width: 100, render: (v) => v === 'profile' ? <Tag color="geekblue">企业速览</Tag> : v === 'clue' ? <Tag color="orange">财产线索</Tag> : <Tag color="green">债权尽调</Tag> },
     {
       title: '债务人/企业', dataIndex: 'debtor_name', ellipsis: true,
       render: (v) => <Text strong>{v ? String(v).split('；')[0] : '—'}</Text>,
@@ -107,55 +190,52 @@ export default function TasksPage() {
     },
     { title: '生成时间', dataIndex: 'created_at', render: (v) => (v ? String(v).replace('T', ' ').slice(0, 16) : '—') },
     {
-      title: '操作', width: 110,
-      render: (_, record) => (
-        record.type === 'profile'
-          ? <Button type="link" onClick={() => navigate(`/debtor-report/${record.profile_id}`)}>查看报告</Button>
+      title: '操作', width: 200,
+      render: (_, record) => {
+        const kind = record.type === 'profile' ? 'profile' : record.type === 'clue' ? 'clue' : 'report'
+        const viewUrl = record.type === 'profile'
+          ? `/debtor-report/${record.profile_id}`
           : record.type === 'clue'
-            ? <Button type="link" onClick={() => navigate(`/clue-report/${record.clue_id}`)}>查看报告</Button>
-            : <Button type="link" onClick={() => navigate(`/report/${record.task_id}/${record.report_id}`)}>查看报告</Button>
+            ? `/clue-report/${record.clue_id}`
+            : `/report/${record.task_id}/${record.report_id}`
+        return (
+          <Space size={0}>
+            <Button type="link" onClick={() => navigate(viewUrl)}>查看报告</Button>
+            <Popconfirm
+              title={record.type === 'clue' || record.type === 'profile' ? '移入回收站？（可在回收站恢复或清空）' : '移入回收站？（可在回收站恢复或清空）'}
+              onConfirm={() => delItem(kind, record.type === 'clue' ? record.clue_id : record.type === 'profile' ? record.profile_id : record.report_id)}>
+              <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
+            </Popconfirm>
+          </Space>
+        )
+      },
+    },
+  ]
+
+  const trashColumns = [
+    { title: '类型', dataIndex: 'kind', width: 110, render: (v) => { const m = KIND_META[v] || { tag: 'default', label: v }; return <Tag color={m.tag}>{m.label}</Tag> } },
+    { title: '名称', dataIndex: 'name', ellipsis: true, render: (v) => <Text strong>{v}</Text> },
+    { title: '删除时间', dataIndex: 'deleted_at', width: 150, render: (v) => (v ? String(v).replace('T', ' ').slice(0, 16) : '—') },
+    {
+      title: '操作', width: 280,
+      render: (_, it) => (
+        <Space size={0} wrap>
+          <Button type="link" icon={<UndoOutlined />} onClick={() => doRestore(it)}>恢复</Button>
+          <Button type="link" icon={<ReloadOutlined />} onClick={() => doRegenerate(it)}>重新尽调/生成</Button>
+          <Button type="link" danger icon={<DeleteOutlined />} onClick={() => doClear(it)}>清空</Button>
+        </Space>
       ),
     },
   ]
 
   const setTab = (key) => setParams(key === 'tasks' ? {} : { tab: key }, { replace: true })
 
-  // 修改密码
-  const [pwdModal, setPwdModal] = useState(false)
-  const [pwdForm] = Form.useForm()
-  const changePassword = async () => {
-    const v = await pwdForm.validateFields()
-    try {
-      await authApi.changePassword({ old_password: v.old_password, new_password: v.new_password })
-      message.success('密码已修改，请重新登录')
-      setPwdModal(false)
-      useAuthStore.getState().logout()
-      navigate('/login', { state: { from: window.location.pathname } })
-    } catch { /* 拦截器已提示 */ }
-  }
-
-  const profileTab = (
-    <Card>
-      <Descriptions column={1} bordered size="small" style={{ maxWidth: 560 }}>
-        <Descriptions.Item label="用户名">{user?.username}</Descriptions.Item>
-        <Descriptions.Item label="昵称">{user?.nickname || '—'}</Descriptions.Item>
-        <Descriptions.Item label="角色">
-          <Tag color={user?.role === 'admin' ? 'gold' : user?.role === 'editor' ? 'blue' : 'green'}>
-            {user?.role === 'admin' ? '管理员' : user?.role === 'editor' ? '运营编辑' : '注册用户'}
-          </Tag>
-        </Descriptions.Item>
-        <Descriptions.Item label="积分余额">{user?.points ?? 0}</Descriptions.Item>
-        <Descriptions.Item label="注册时间">{user?.created_at ? String(user.created_at).replace('T', ' ').slice(0, 16) : '—'}</Descriptions.Item>
-      </Descriptions>
-      <Space style={{ marginTop: 16 }}>
-        <Button type="primary" onClick={() => setPwdModal(true)}>修改密码</Button>
-      </Space>
-    </Card>
-  )
-
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 16px' }}>
-      <Title level={3}>用户中心</Title>
+      <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 8 }}>
+        <Title level={3} style={{ margin: 0 }}>用户中心</Title>
+        <Button icon={<UserOutlined />} onClick={() => navigate('/account')}>账户信息</Button>
+      </Space>
       <Tabs
         activeKey={tab}
         onChange={setTab}
@@ -165,15 +245,12 @@ export default function TasksPage() {
             label: `我的任务（${tasks.length + valuations.length + clues.length}）`,
             children: loading ? <Spin /> : (
               <>
-                {/* 区块一：智能尽调任务 */}
                 <Card title={<span><Tag color="blue">智能尽调</Tag> 债权尽调任务（{tasks.length}）</span>} style={{ marginBottom: 16 }}>
                   <Table rowKey="id" columns={taskColumns} dataSource={tasks} pagination={{ pageSize: 10 }} scroll={{ x: 'max-content' }} />
                 </Card>
-                {/* 区块二：土地厂房估价 */}
                 <Card title={<span><Tag color="orange">土地厂房估价</Tag> 估价记录（{valuations.length}）</span>} style={{ marginBottom: 16 }}>
                   {valuations.length ? <Table rowKey="id" columns={activityColumns} dataSource={valuations} pagination={{ pageSize: 10 }} /> : <Text type="secondary">暂无估价记录，去「土地厂房估价」试试</Text>}
                 </Card>
-                {/* 区块三：财产线索 */}
                 <Card title={<span><Tag color="green">财产线索</Tag> 查询记录（{clues.length}）</span>}>
                   {clues.length ? <Table rowKey="id" columns={activityColumns} dataSource={clues} pagination={{ pageSize: 10 }} /> : <Text type="secondary">暂无财产线索查询记录，去「财产线索」试试</Text>}
                 </Card>
@@ -185,47 +262,36 @@ export default function TasksPage() {
             label: `我的报告（${myReports.length}）`,
             children: loading ? <Spin /> : (
               <>
-                {/* 2026-09-02：报告搜索（债务人/标题过滤） */}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-                  <Input.Search allowClear placeholder="搜索债务人/标题" style={{ width: 240 }} onSearch={(v) => setReportKeyword(v)} />
+                  <Input.Search allowClear placeholder="搜索债务人/企业" style={{ width: 240 }} onSearch={(v) => setReportKeyword(v)} />
                 </div>
-                {/* 区块一：智能尽调报告（每份一行，按债务人）*/}
-                <Card title={<span><Tag color="blue">智能尽调</Tag> 尽调报告（{filteredReports.length}）</span>} style={{ marginBottom: 16 }}>
-                  <Table rowKey="report_id" columns={reportColumns} dataSource={filteredReports} pagination={{ pageSize: 10 }} scroll={{ x: 'max-content' }} />
-                </Card>
-                {/* 区块二：估价报告（后期） */}
-                <Card title={<span><Tag color="orange">土地厂房估价</Tag> 估价报告（{valuations.length}）</span>}>
-                  {valuations.length
-                    ? <Table rowKey="id" columns={activityColumns} dataSource={valuations} pagination={{ pageSize: 10 }} />
-                    : <Text type="secondary">暂无估价记录（土地厂房估价可单独使用）</Text>}
+                {/* 2026-09-08: 估价已移出"我的报告"(估价=任务记录, 见"我的任务") */}
+                <Card title={<span><Tag color="blue">尽调/速览/线索</Tag> 全部报告（{filteredReports.length}）</span>}>
+                  {filteredReports.length
+                    ? <Table rowKey="report_id" columns={reportColumns} dataSource={filteredReports} pagination={{ pageSize: 10 }} scroll={{ x: 'max-content' }} />
+                    : <Text type="secondary">暂无报告</Text>}
                 </Card>
               </>
             ),
           },
-          { key: 'profile', label: '账户信息', children: profileTab },
+          {
+            key: 'trash',
+            label: `回收站（${trashItems.length}）`,
+            children: loading ? <Spin /> : (
+              <>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                  <Button danger icon={<RestOutlined />} disabled={!trashItems.length} onClick={doClearAll}>清空回收站</Button>
+                </div>
+                <Card>
+                  {trashItems.length
+                    ? <Table rowKey={(r) => `${r.kind}-${r.id}`} columns={trashColumns} dataSource={trashItems} pagination={{ pageSize: 10 }} scroll={{ x: 'max-content' }} />
+                    : <Text type="secondary">回收站为空。删除的任务/报告会先进入这里，可恢复、重新生成或彻底清空。</Text>}
+                </Card>
+              </>
+            ),
+          },
         ]}
       />
-
-      {/* 修改密码弹窗 */}
-      <Modal title="修改密码" open={pwdModal} onOk={changePassword} onCancel={() => setPwdModal(false)} okText="确认修改" destroyOnClose>
-        <Form form={pwdForm} layout="vertical">
-          <Form.Item name="old_password" label="原密码" rules={[{ required: true, message: '请输入原密码' }]}>
-            <Input.Password />
-          </Form.Item>
-          <Form.Item name="new_password" label="新密码" rules={[{ required: true, min: 6, message: '至少6位' }]}>
-            <Input.Password />
-          </Form.Item>
-          <Form.Item name="confirm" label="确认新密码" dependencies={['new_password']}
-            rules={[
-              { required: true, message: '请再次输入新密码' },
-              ({ getFieldValue }) => ({
-                validator: (_, v) => (!v || getFieldValue('new_password') === v ? Promise.resolve() : Promise.reject(new Error('两次密码不一致'))),
-              }),
-            ]}>
-            <Input.Password />
-          </Form.Item>
-        </Form>
-      </Modal>
     </div>
   )
 }

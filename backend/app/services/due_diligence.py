@@ -364,7 +364,7 @@ async def _node4_valuation(claim: Claim) -> dict:
     # 融资租赁设备债权：视同有抵押物，但不做设备估价与覆盖率分析
     if extra.get("lease_equipment") == "1":
         lease_note = ("本债权为融资租赁（设备租赁）：租赁物（设备）作为担保物视同抵押物，"
-                      "平台暂不对设备估价，也不计算抵押物对债权的覆盖率。"
+                      "平台暂不对设备估价，也不计算抵押物对债权的抵偿度。"
                       "回收主要依赖设备处置或承租方继续履约，建议结合设备成新率/二手市场另行评估。")
         return {
             "present": True,
@@ -375,7 +375,7 @@ async def _node4_valuation(claim: Claim) -> dict:
             "valuation_method": "融资租赁：不做设备估价",
             "valuation_notes": [],
             "coverage_vs_interest": None,
-            "coverage_note": "融资租赁设备债权：不计算覆盖率",
+            "coverage_note": "融资租赁设备债权：不计算抵偿度",
             "liquidity": lease_note,
             "note": lease_note,
         }
@@ -433,8 +433,10 @@ async def _node4_valuation(claim: Claim) -> dict:
         result = estimate_land_factory(claim.collateral or "", extra)
     valuation = result.get("valuation")
 
-    # 覆盖判断（用户确认口径 2026-08-26）：覆盖率 = 本息合计 ÷ 抵押物估值
-    # ≥100% 覆盖（本息≥抵押物：处置无需倒找债务人，差额可追偿）；<100% 未覆盖（处置后可能退还债务人多余款项）
+    # 抵偿度（2026-09-09 口径翻转, 用户拍板）：原"覆盖率=本息÷估值"方向反直觉已废弃。
+    # 新口径(专业语义, 内部字段名沿用 coverage_vs_interest 以减改动):
+    #   抵偿度 = 抵押物主参考估值 ÷ 债权本息合计 ×100%（≈ 金融 LTV 的倒数, 中文习惯）
+    #   ≥150% 五星 / 100~150% 四星 / 70~100% 三星 / 40~70% 二星 / <40% 或重大不确定 一星
     coverage = None
     if valuation and valuation.get("reference_cents"):
         total_interest_cents = None
@@ -442,20 +444,27 @@ async def _node4_valuation(claim: Claim) -> dict:
             total_interest_cents = claim.principal_cents + (claim.interest_cents or 0)
         if total_interest_cents and total_interest_cents > 0:
             collateral_cents = valuation["reference_cents"]
-            ratio = total_interest_cents / collateral_cents
+            # ratio = 抵偿度: 估值 / 本息(翻转后>1 才是估值足以抵债)
+            ratio = collateral_cents / total_interest_cents
             covered = ratio >= 1.0
+            gap_wan = (total_interest_cents - collateral_cents) / 100 / 10000
+            coll_wan = collateral_cents / 100 / 10000
+            debt_wan = total_interest_cents / 100 / 10000
             coverage = {
                 "collateral_cents": collateral_cents,
                 "collateral_label": valuation.get("reference_label") or "抵押物主参考估值",
                 "interest_total_cents": total_interest_cents,
-                "coverage_ratio": round(ratio * 100, 1),
+                "coverage_ratio": round(ratio * 100, 1),  # 抵偿度%
                 "covered": covered,
-                # 未覆盖：处置/以物抵债后可能须退还债务人多余款项（平台核心规则）
+                # 2026-09-09: 表述改为"抵偿度"专业口径(不再用"覆盖率/覆盖比例"字样)
                 "note": (
-                    f"抵押物{valuation.get('reference_label') or '估值'}与债权本息对照：本息对抵押物覆盖比例约 {ratio * 100:.1f}%。"
-                    + ("覆盖充足：处置抵押物所得可全部抵债，本息超出抵押物的差额可继续向债务人追偿。"
+                    f"抵押物主参考估值约 {coll_wan:,.2f} 万元，债权本息合计约 {debt_wan:,.2f} 万元，"
+                    f"抵押物对债权的抵偿度约 {ratio * 100:.1f}%。"
+                    + ("估值可覆盖债权本息，处置变价后有望足额受偿；估值高于本息的部分仅为理论余量，"
+                       "实际受偿金额以处置结果与顺位核实为准。"
                        if covered else
-                       "未覆盖：本息低于抵押物估值，若处置或以物抵债，超出债权本息的部分可能需要退还债务人。"),
+                       f"估值不足以覆盖本息，存在缺口约 {gap_wan:,.2f} 万元，"
+                       "处置后不足部分仍可向债务人继续追偿（处置价格与顺位影响实际受偿）。"),
                 ),
             }
 
@@ -497,13 +506,13 @@ async def _ai_collateral_note(claim: Claim, valuation: dict | None, coverage: di
     try:
         system = (
             "你是不良资产抵押物分析专家。请基于给定的抵押物估值数据，用 2-4 句话客观解读抵押物的"
-            "价值特点、与债权的覆盖关系、处置时需关注的要点。\n"
-            "铁律：只能引用系统给出的数字（估值区间、面积、单价、参考估值、本息合计、覆盖比例）；"
+            "价值特点、对债权的抵偿能力、处置时需关注的要点。\n"
+            "铁律：只能引用系统给出的数字（估值区间、面积、单价、参考估值、本息合计、抵偿度）；"
             "禁止编造任何数字、面积、地址、权属信息；数据缺失标「需人工核实」；"
-            "不输出买入建议、不预测成交价、不输出 7 折/8 折折算；不用\"AI\"字样。\n"
-            "覆盖口径（用户确认的行业规则）：覆盖率 = 本息合计 ÷ 抵押物估值。≥100% 为覆盖（处置抵押物所得全部抵债、无需倒找债务人、差额可追偿，覆盖越多越好）；"
-            "<100% 为未覆盖（处置/以物抵债后可能须退还债务人多余款项，买家一般不买或暂缓处置等利息覆盖）。"
-            "解读时站在债权人/不良资产从业者角度表述覆盖情况。\n"
+            "不输出买入建议、不预测成交价、不输出 7 折/8 折折算；不用\"AI\"字样；禁止使用'覆盖率'一词。\n"
+            "口径（2026-09-09 用户拍板）：抵偿度 = 抵押物主参考估值 ÷ 债权本息合计 ×100%。"
+            "抵偿度越高越有利（≥100% 估值可覆盖本息，处置后有望足额受偿；<100% 存在缺口，处置不足部分可继续追偿）。"
+            "解读时站在债权人/不良资产从业者角度说明抵偿能力与缺口。\n"
             "必须严格按以下 JSON 格式输出（只输出 JSON，不要多余文字）：{\"note\": \"你的解读文字\"}"
         )
         user = json.dumps({
@@ -517,8 +526,8 @@ async def _ai_collateral_note(claim: Claim, valuation: dict | None, coverage: di
             "单价参考": valuation.get("unit_price_range"),
             "面积": valuation.get("area_sqm"),
             "本息合计(万元)": (coverage or {}).get("interest_total_cents", 0) / 100 / 10000 if coverage else None,
-            "覆盖比例(%)": (coverage or {}).get("coverage_ratio") if coverage else None,
-            "是否覆盖": "覆盖" if (coverage or {}).get("covered") else ("未覆盖" if coverage else None),
+            "抵偿度(%)": (coverage or {}).get("coverage_ratio") if coverage else None,
+            "估值是否覆盖本息": "是" if (coverage or {}).get("covered") else ("否" if coverage else None),
         }, ensure_ascii=False)
         r = await chat_json(system, user, temperature=0.3)
         note = str(r.get("note") or r.get("analysis") or "").strip()
@@ -759,22 +768,20 @@ async def _node6_summary(claim: Claim, nodes: dict) -> dict:
 1. 严格按 JSON 输出：{"summary": {"rating": "★~★★★★★", "core_logic": [..]},
    "risk": {"favorable": [..], "risk": [..], "need_manual_verify": [..]}}
 2. 所有结论必须来自给定数据，数据缺失标"需人工核实"，禁止编造。
-3. 覆盖口径（用户确认的行业规则，务必遵守）：覆盖率 = 本息合计 ÷ 抵押物估值。
-   ≥100% 为覆盖（处置抵押物所得全部抵债、无需倒找债务人、差额可继续追偿，覆盖越多越好）；
-   <100% 为未覆盖（处置/以物抵债后可能须退还债务人多余款项）。
-   站在债权人/不良资产从业者角度分析：覆盖越多，回收保障越强。
-4. 评级规则（只给星，不下买入建议）：★★★★★ 覆盖>150%且司法清晰；★★★★ 覆盖100%~150%；
-   ★★★ 覆盖70%~100%（接近覆盖）；★★ 覆盖40%~70%（未覆盖，处置可能须退还多余款项）；
-   ★ 覆盖<40%或重大不确定。
+3. 抵偿口径（2026-09-09 用户拍板, 取代旧"覆盖率"口径）：抵偿度 = 抵押物主参考估值 ÷ 债权本息合计 ×100%。
+   ≥100% 即估值可覆盖本息（处置后有望足额受偿）；<100% 存在缺口（处置不足部分可继续向债务人追偿）。
+   站在债权人/不良资产从业者角度分析：抵偿度越高，回收保障越强。禁止使用"覆盖率/覆盖比例"字样。
+4. 评级规则（只给星，不下买入建议）：★★★★★ 抵偿度≥150%且司法清晰；★★★★ 抵偿度100%~150%；
+   ★★★ 抵偿度70%~100%；★★ 抵偿度40%~70%；★ 抵偿度<40%或重大不确定。
 5. 严禁输出：建议买入价、收益率、利润测算、买入决策。
 6. 表达风格（2026-09-08 用户确认）：以资深不良资产律师审阅债权材料的口吻行文，专业克制、面向实操；
-   core_logic 与 risk 各条须结合本债权的具体数据（本金/利息/抵押物/覆盖率/司法状态）差异化表述，
+   core_logic 与 risk 各条须结合本债权的具体数据（本金/利息/抵押物/抵偿度/司法状态）差异化表述，
    不同债权写法必须不同，禁止空泛模板句；每条 1~2 句、不超过 45 字。 每条先给一句话结论再展开；只讲与本债权相关的要点，不罗列无关法条/判例/情形，同一要点不重复论证；风险提示与应对成对出现；用词精炼不堆砌。"""
     if lease:
-        # 融资租赁设备债权（2026-09-04 用户确认）：不做设备估价与覆盖率分析，评级改按司法/主体情况
+        # 融资租赁设备债权（2026-09-04 用户确认）：不做设备估价与抵偿度分析，评级改按司法/主体情况
         system += (
-            "\n6. 本条为融资租赁设备债权：设备（租赁物）充当担保物，平台不做设备估价、不计算覆盖率，"
-            "因此第 3/4 条的覆盖口径与覆盖率评级一律不适用，禁止输出任何覆盖比例与'覆盖/未覆盖'结论；"
+            "\n7. 本条为融资租赁设备债权：设备（租赁物）充当担保物，平台不做设备估价、不计算抵偿度，"
+            "因此第 3/4 条的抵偿口径与评级一律不适用，禁止输出抵偿度/覆盖类数值结论；"
             "评级请综合司法状态（是否胜诉/执行进展）、债务人经营状况、租金回收可能、设备残值可处置性给出，"
             "并仅在 core_logic 说明评级依据。"
         )
@@ -793,8 +800,8 @@ async def _node6_summary(claim: Claim, nodes: dict) -> dict:
 def _fallback_summary(claim: Claim, nodes: dict) -> dict:
     """无 API Key / LLM 失败时的降级摘要（只给星，不给建议）
 
-    覆盖口径（用户确认 2026-08-26）：覆盖率 = 本息合计 ÷ 抵押物估值。
-    ≥100% 覆盖（处置抵押物所得全部抵债、差额可追偿，覆盖越多越好）；<100% 未覆盖。
+    抵偿口径（2026-09-09 用户拍板）：抵偿度 = 抵押物主参考估值 ÷ 债权本息合计 ×100%。
+    ≥100% 估值可覆盖本息；<100% 存在缺口可继续追偿。禁止"覆盖率"字样。
     """
     principal_wan = (claim.principal_cents or 0) / 100 / 10000
     principal_text = f"{principal_wan:.2f}万元" if claim.principal_cents else "未知"
@@ -804,7 +811,7 @@ def _fallback_summary(claim: Claim, nodes: dict) -> dict:
         lease = _extra.get("lease_equipment") == "1"
     except Exception:
         lease = False
-    # 按抵押物覆盖情况给星（覆盖率 = 本息 ÷ 抵押物估值）；融资租赁设备债权不做覆盖率评级
+    # 按抵偿度给星（抵偿度 = 抵押物估值 ÷ 本息）；融资租赁设备债权不做抵偿度评级
     rating = "★★★"
     coverage_ratio = None
     covered = None
@@ -814,8 +821,8 @@ def _fallback_summary(claim: Claim, nodes: dict) -> dict:
             coverage = nodes.get("collateral", {}).get("coverage_vs_interest") or {}
             collateral = coverage.get("collateral_cents") or val.get("reference_cents") or val.get("neutral_cents")
             total = coverage.get("interest_total_cents")
-            if collateral and total and collateral > 0:
-                ratio = total / collateral  # 本息 ÷ 抵押物
+            if collateral and total and total > 0:
+                ratio = collateral / total  # 抵偿度: 抵押物 ÷ 本息
                 coverage_ratio = round(ratio * 100, 1)
                 covered = ratio >= 1.0
                 if ratio >= 1.5:
@@ -833,11 +840,11 @@ def _fallback_summary(claim: Claim, nodes: dict) -> dict:
     logic = [f"债务人：{claim.debtor_name or '未知'}；本金：{principal_text}（详见报告）"]
     risk_items = ["司法状态需人工核实"]
     if coverage_ratio is not None:
-        logic.append(f"抵押物对债权本息覆盖比例约 {coverage_ratio}%（本息合计对抵押物估值）")
+        logic.append(f"抵押物对债权本息的抵偿度约 {coverage_ratio}%（主参考估值 ÷ 本息合计）")
         if covered is False:
-            risk_items.append("未覆盖：本息低于抵押物估值，处置或以物抵债后可能存在退还债务人多余款项的问题")
+            risk_items.append(f"抵偿度不足：估值低于本息合计，存在缺口（差额部分可继续向债务人追偿）")
     if lease:
-        logic.append("本债权为融资租赁设备债权：设备（租赁物）充当担保物，平台不做设备估价与覆盖率分析")
+        logic.append("本债权为融资租赁设备债权：设备（租赁物）充当担保物，平台不做设备估价与抵偿度分析")
     return {
         "summary": {
             "rating": rating,
@@ -851,6 +858,76 @@ def _fallback_summary(claim: Claim, nodes: dict) -> dict:
                                    if lease else ["本息计算基准日", "判决书", "抵押物估值", "抵押物占用/租赁情况"]),
         },
     }
+
+
+def _augment_mortgage_facts(content: dict, claim: Claim) -> None:
+    """2026-09-09 抵押关系事实增强(第三人抵押/顺位/展示修正)——代码固化, 收尾统一执行:
+    - 抵押人≠债务人 → 识别"第三人抵押", core_logic 加"两条追索线"提示
+    - 非第一顺位抵押 → 处置路径文案不得出现"无需其他债权人同意/优先受偿无碍"类表述
+    - 未录入利息 → 结论条不把本金当利息合计展示
+    - 无保证人 → legal.statutes 剔除 保证/担保解释 类条文(防无关法条堆砌)
+    """
+    try:
+        extra = json.loads(claim.extra_fields) if claim.extra_fields else {}
+    except Exception:
+        extra = {}
+    sec = content.get("sections") or {}
+    core = (sec.get("summary") or {}).get("core_logic") or []
+    risk = (sec.get("risk") or {}).get("risk") or []
+    debtor = claim.debtor_name or ""
+    mortgagor = str(extra.get("mortgagor") or "").strip()
+    rank = str(extra.get("mortgage_rank") or "").strip()
+
+    is_third_party = bool(mortgagor) and mortgagor != debtor
+    rank_after_first = bool(rank) and ("第一" not in rank)
+
+    if is_third_party:
+        line = (f"抵押人为{mortgagor}（≠债务人{debtor}），属第三人抵押："
+                "追索应按两条线推进——对债务人主张清偿，对抵押人实现抵押权"
+                + ("（注意其顺位" + rank + "，实际受偿取决于前序顺位受偿后的残值）" if rank else "") + "。")
+        if line not in core:
+            core.append(line)
+        if "第三人抵押" not in " ".join(risk):
+            risk.append(f"第三人抵押：抵押物非债务人自有，实现抵押权需单独对抵押人主张，程序与周期可能更长")
+    elif rank_after_first:
+        line = f"抵押顺位为{rank}：实际受偿取决于前序顺位债权受偿后的残值，处置前应核实前序债权金额。"
+        if line not in core:
+            core.append(line)
+
+    # 非第一顺位: 处理"无需其他债权人同意"类误述(模板 paths 与 AI ai_note 都扫)
+    forbid = "无需其他债权人同意"
+    if (rank_after_first or is_third_party):
+        replacement = (f"本债权抵押顺位为{rank or '待核实'}，受偿须先清偿前序顺位；"
+                       "实际可受偿金额取决于前序顺位受偿后的残值。")
+        for path in (sec.get("disposal") or {}).get("paths") or []:
+            for fld in ("risk", "detail"):
+                if forbid in str(path.get(fld) or ""):
+                    path[fld] = (path[fld] or "").replace(
+                        "本债权享有抵押权优先受偿，无需其他债权人同意。", replacement)
+                    path[fld] = (path[fld] or "").replace("无需其他债权人同意", "仅在第一顺位时才无需其他债权人同意")
+        ai_note = (sec.get("disposal") or {}).get("ai_note") or ""
+        if forbid in ai_note:
+            # 顺序: ①完整误句→顺位提示 ②残留短语逐级消除(避免二次引入关键词)
+            ai_note = ai_note.replace("因享有抵押权优先受偿，无需其他债权人同意",
+                                       f"本债权抵押顺位为{rank or '待核实'}，受偿须先清偿前序顺位")
+            ai_note = ai_note.replace("仅在第一顺位时才无需其他债权人同意", "仅在为第一顺位时方适用")
+            ai_note = ai_note.replace("无需其他债权人同意", "（须按抵押顺位受偿）")
+            (sec.get("disposal") or {})["ai_note"] = ai_note
+
+    # 未录入利息 → 头部"利息合计"不冒充本金
+    bar = content.get("conclusion_bar") or {}
+    intr = (sec.get("claim_basic") or {}).get("interest_detail") or {}
+    if intr.get("mode") == "no_info" or not (claim.interest_cents):
+        if (bar.get("interest_total_text") or "") == (bar.get("principal_text") or "") and bar.get("interest_total_text"):
+            bar["interest_total_text"] = None  # 前端显示"—", 不再与本金同值误导
+
+    # 无保证人: 剔除 保证/担保解释 类条文(无关法条堆砌)
+    legal = sec.get("legal") or {}
+    st = legal.get("statutes") or []
+    if not claim.guarantor and st:
+        kept = [x for x in st if not any(k in str(x.get("name") or "") for k in ("保证", "担保"))]
+        if kept:
+            legal["statutes"] = kept
 
 
 async def build_report_content(claim: Claim, progress: NodeProgress) -> dict:
@@ -920,6 +997,8 @@ async def build_report_content(claim: Claim, progress: NodeProgress) -> dict:
         },
         "disclaimer": "本报告由 NPL CN 平台基于公开信息和系统分析自动生成，仅供参考，不构成投资建议。报告中的估值基于公开市场数据粗估，不替代专业评估机构出具的正式评估报告。投资决策请结合专业律师意见和实地尽调结果。",
     }
+    # 2026-09-09 收尾事实增强(第三人抵押/顺位/利息展示/无关法条过滤)
+    _augment_mortgage_facts(content, claim)
     return content
 
 
@@ -1103,12 +1182,13 @@ async def _build_disposal_section(claim: Claim, nodes: dict) -> dict:
         "priority_text": plan.get("priority_text", "中"),
         "note": "以上处置路径由系统根据尽调数据自动生成，并列供参考；具体策略请结合专业律师意见，不构成投资建议。",
     }
-    # 覆盖联动（平台核心规则）：未覆盖时提示退还债务人多余款项的问题
+    # 抵偿度联动(2026-09-09 口径翻转)：抵偿度<100%(估值低于本息) → 提示处置缺口
     coverage = (nodes.get("collateral") or {}).get("coverage_vs_interest") or {}
     if coverage.get("covered") is False:
         result["coverage_warning"] = (
-            "本债权未覆盖（本息低于抵押物估值）：若处置抵押物或以物抵债，超出债权本息的部分可能需要退还债务人。"
-            "建议暂缓处置，等利息与罚息累积到覆盖水平后再处置，避免倒找债务人款项。"
+            "抵押物估值低于债权本息合计（抵偿度不足 100%）：即使抵押物足额变现也不足以清偿，"
+            "处置后存在缺口，不足部分仍需向债务人继续追偿；建议同步排查债务人其他可执行财产，"
+            "并核实抵押顺位对实际受偿的影响。"
         )
     # AI 处置方案解读（可选增强，失败降级；不新增路径、不标记推荐、不引入新数字）
     ai_note = await _ai_disposal_note(claim, result, nodes)

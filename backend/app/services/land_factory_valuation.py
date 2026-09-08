@@ -80,21 +80,21 @@ def _extract_area(text: str, keyword: str) -> float | None:
     """
     # 写法1：关键词紧跟（可含"总"）
     m = re.search(
-        rf"{keyword}\s*(?:总)?面积\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(?:㎡|平方米|平米|平)?",
+        rf"{keyword}\s*(?:总)?面积\s*[:：]?\s*({_NUM_GROUP})\s*(?:㎡|平方米|平米|平)?",
         text,
     )
     if m:
         return float(m.group(1))
     # 写法2：关键词 + 分隔符 + 总面积
     m2 = re.search(
-        rf"{keyword}[，,、\s]*总?面积\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(?:㎡|平方米|平米|平)",
+        rf"{keyword}[，,、\s]*总?面积\s*[:：]?\s*({_NUM_GROUP})\s*(?:㎡|平方米|平米|平)",
         text,
     )
     if m2:
         return float(m2.group(1))
     # 写法3：关键词后短距离内出现面积（如『土地5000平方米』）
     m3 = re.search(
-        rf"{keyword}[^，。；\n]{{0,15}}?(\d+(?:\.\d+)?)\s*(?:㎡|平方米|平米|平)",
+        rf"{keyword}[^，。；\n]{{0,15}}?({_NUM_GROUP})\s*(?:㎡|平方米|平米|平)",
         text,
     )
     if m3:
@@ -104,7 +104,7 @@ def _extract_area(text: str, keyword: str) -> float | None:
 
 def _extract_any_area(text: str) -> list[float]:
     """提取描述中所有面积数字（兜底：无明确土地/厂房标注时使用）"""
-    return [float(x) for x in re.findall(r"(\d+(?:\.\d+)?)\s*(?:㎡|平方米|平米|平)", text)]
+    return [n for n in (_norm_num(x) for x in re.findall(rf"({_NUM_GROUP})\s*(?:㎡|平方米|平米|平)", text)) if n]
 
 
 def _extract_build_year(text: str) -> int | None:
@@ -358,24 +358,46 @@ _STRUCTURE_LABEL = {
 }
 
 
+def _norm_num(v) -> float | None:
+    """数字标准化: 千分位逗号/全角逗号/空格去除(2026-09-09 面积千分位 100 倍错修复)"""
+    if v is None:
+        return None
+    s = str(v).strip().replace(",", "").replace("，", "").replace(" ", "")
+    m = re.match(r"(\d+(?:\.\d+)?)", s)
+    return float(m.group(1)) if m else None
+
+
+# 支持千分位与普通两种数字形态(修复 58,595.59 被截成 595.59)
+_NUM_GROUP = r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?"
+
+
 def _market_estimate(text: str, ctype: str, extra: dict) -> dict:
-    """非工业类：维持原市场价区间法"""
-    area = None
-    m = re.search(r"(\d+(?:\.\d+)?)\s*(?:㎡|平方米|平米|平)", text)
-    if m:
-        area = float(m.group(1))
+    """非工业类：维持原市场价区间法(2026-09-09 千分位修复+面积来源优先级)"""
+    # 面积候选: ①结构化字段 ②文本全部面积候选(千分位兼容)
+    candidates: list[float] = []
+    for v in (extra.get("building_area_sqm"), extra.get("land_area_sqm")):
+        n = _norm_num(v)
+        if n and n > 0:
+            candidates.append(n)
+    for m in re.finditer(rf"({_NUM_GROUP})\s*(?:㎡|平方米|平米|平)", text):
+        n = _norm_num(m.group(1))
+        if n and n > 0:
+            candidates.append(n)
     label = None
     for kw, rng in TYPE_PRICE_RANGE.items():
         if kw in ctype or kw in text:
             label = kw
             break
-    if not label or not area:
+    if not label or not candidates:
         return {
             "method": "insufficient",
             "valuation": {"data_insufficient": True, "note": "缺少抵押物类型或面积，无法估值"},
             "notes": ["请补充抵押物类型与面积"],
         }
     lo, hi = TYPE_PRICE_RANGE[label]
+    # 量级候选: 结构化字段在前, 文本候选随后; 取最大值(总面积通常最大且带 ㎡ 后缀)
+    # 千分位误读(58,595.59→595.59)已由 _NUM_GROUP+_norm_num 在候选层消除
+    area = max(candidates)
     conservative = int(area * lo * 100)
     neutral = int(area * (lo + hi) / 2 * 100)
     optimistic = int(area * hi * 100)

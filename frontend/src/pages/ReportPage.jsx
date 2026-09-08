@@ -252,28 +252,11 @@ function CollateralCard({ data }) {
           <Alert type="info" showIcon style={{ marginTop: 8, marginBottom: 8 }} message={val.estimate_note || '市场价格无法确定，估值仅为粗估，不替代专业评估'} />
         </>
       )}
-      {cov.interest_total_cents && (
-        <div style={{ marginTop: 12 }}>
-          <Text strong>覆盖参考（债权人角度：本息合计 ÷ 抵押物估值）：</Text>
-          <div style={{ marginTop: 8, display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-            <div style={{ padding: '10px 16px', background: '#F7F9FC', borderRadius: 6, textAlign: 'center' }}>
-              <div style={{ fontSize: 12, color: 'var(--text-weak)' }}>{cov.collateral_label || '抵押物主参考估值'}</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--primary)' }}>{(cov.collateral_cents / 100 / 10000).toFixed(4)}万</div>
-            </div>
-            <div style={{ padding: '10px 16px', background: '#F7F9FC', borderRadius: 6, textAlign: 'center' }}>
-              <div style={{ fontSize: 12, color: 'var(--text-weak)' }}>本息合计</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--danger)' }}>{(cov.interest_total_cents / 100 / 10000).toFixed(4)}万</div>
-            </div>
-            {cov.coverage_ratio != null && (
-              <div style={{ padding: '10px 16px', background: cov.covered ? '#f6ffed' : '#fff7e6', borderRadius: 6, textAlign: 'center', border: `1px solid ${cov.covered ? '#b7eb8f' : '#ffd591'}` }}>
-                <div style={{ fontSize: 12, color: 'var(--text-weak)' }}>覆盖比例（本息/抵押物）</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: cov.covered ? '#389e0d' : '#d46b08' }}>{cov.coverage_ratio}%</div>
-                <div style={{ fontSize: 12, color: cov.covered ? '#389e0d' : '#d46b08' }}>{cov.covered ? '覆盖' : '未覆盖'}</div>
-              </div>
-            )}
-          </div>
-          {cov.note && <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>{cov.note}</Text>}
-        </div>
+      {/* 2026-09-09: 删除"覆盖率"醒目卡片(非专业词, 不重点强调); 抵偿关系以说明文字呈现 */}
+      {cov.interest_total_cents && cov.note && (
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 10 }}>
+          {cov.note}
+        </Text>
       )}
       {data.liquidity && <Alert type="info" showIcon style={{ marginTop: 8 }} message={data.liquidity} />}
       {data.ai_note && (
@@ -370,7 +353,7 @@ function DisposalCard({ data }) {
       )}
       {data.note && <Text type="secondary" style={{ fontSize: 12 }}>{data.note}</Text>}
       {data.coverage_warning && (
-        <Alert type="warning" showIcon style={{ marginTop: 10 }} message="覆盖提示" description={<Text style={{ fontSize: 13 }}>{data.coverage_warning}</Text>} />
+        <Alert type="warning" showIcon style={{ marginTop: 10 }} message="抵偿提示" description={<Text style={{ fontSize: 13 }}>{data.coverage_warning}</Text>} />
       )}
       {data.ai_note && (
         <Alert type="info" showIcon style={{ marginTop: 10, background: '#eef4ff', border: '1px solid #b8d4f5' }} message="解读" description={<Text style={{ fontSize: 13 }}>{data.ai_note}</Text>} />

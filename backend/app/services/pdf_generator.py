@@ -557,10 +557,11 @@ def _render_collateral(s: dict) -> list:
         flow.append(Spacer(1, 8))
         rows = [
             (cov.get("collateral_label") or "抵押物主参考估值", f"{_fmt_wan(cov.get('collateral_cents'))} 万元"),
-            ("本息合计", f"{_fmt_wan(cov.get('interest_total_cents'))} 万元"),
+            ("债权本息合计", f"{_fmt_wan(cov.get('interest_total_cents'))} 万元"),
         ]
         if cov.get("coverage_ratio") is not None:
-            rows.append(("覆盖比例（本息/抵押物）", f"{cov['coverage_ratio']}%（{'覆盖' if cov.get('covered') else '未覆盖'}）"))
+            # 2026-09-09 口径翻转: 展示"抵偿度"(估值/本息), 不再用"覆盖率"字样
+            rows.append(("抵偿度（主参考估值 ÷ 本息）", f"{cov['coverage_ratio']}%（估值{'可覆盖本息' if cov.get('covered') else '不足以覆盖本息'}）"))
         flow.append(_two_col_table(rows))
         if cov.get("note"):
             note = _pdf_clean_note(cov["note"])

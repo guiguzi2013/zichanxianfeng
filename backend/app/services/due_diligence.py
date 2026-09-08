@@ -450,6 +450,12 @@ async def _node4_valuation(claim: Claim) -> dict:
             gap_wan = (total_interest_cents - collateral_cents) / 100 / 10000
             coll_wan = collateral_cents / 100 / 10000
             debt_wan = total_interest_cents / 100 / 10000
+            if covered:
+                cov_suffix = ("估值可覆盖债权本息，处置变价后有望足额受偿；估值高于本息的部分仅为理论余量，"
+                              "实际受偿金额以处置结果与顺位核实为准。")
+            else:
+                cov_suffix = (f"估值不足以覆盖本息，存在缺口约 {gap_wan:,.2f} 万元，"
+                              "处置后不足部分仍可向债务人继续追偿（处置价格与顺位影响实际受偿）。")
             coverage = {
                 "collateral_cents": collateral_cents,
                 "collateral_label": valuation.get("reference_label") or "抵押物主参考估值",
@@ -457,14 +463,10 @@ async def _node4_valuation(claim: Claim) -> dict:
                 "coverage_ratio": round(ratio * 100, 1),  # 抵偿度%
                 "covered": covered,
                 # 2026-09-09: 表述改为"抵偿度"专业口径(不再用"覆盖率/覆盖比例"字样)
+                # 注意: 勿用带括号三目拼接(曾解析成 tuple), 先拼句子再组串
                 "note": (
                     f"抵押物主参考估值约 {coll_wan:,.2f} 万元，债权本息合计约 {debt_wan:,.2f} 万元，"
-                    f"抵押物对债权的抵偿度约 {ratio * 100:.1f}%。"
-                    + ("估值可覆盖债权本息，处置变价后有望足额受偿；估值高于本息的部分仅为理论余量，"
-                       "实际受偿金额以处置结果与顺位核实为准。"
-                       if covered else
-                       f"估值不足以覆盖本息，存在缺口约 {gap_wan:,.2f} 万元，"
-                       "处置后不足部分仍可向债务人继续追偿（处置价格与顺位影响实际受偿）。"),
+                    f"抵押物对债权的抵偿度约 {ratio * 100:.1f}%。{cov_suffix}"
                 ),
             }
 
@@ -930,6 +932,99 @@ def _augment_mortgage_facts(content: dict, claim: Claim) -> None:
             legal["statutes"] = kept
 
 
+async def _build_overall_assessment(claim: Claim, content: dict) -> None:
+    """2026-09-09 报告收尾: AI 生成「整体评估与总结」写入 sections.overall_assessment.
+
+    参照律师长文的可取处(结论先行/风险与应对成对/收束判断), 去掉堆砌:
+    2-4 段 = 一句话整体定性 → 受偿前景与关键变量 → 行动要旨(呼应处置路径与待补充清单)
+           → (可选)一句最直白概括收尾。
+    只引用随附事实行, 禁新数字/法条全文/买入建议/收益率/"覆盖率"/AI 字样;
+    LLM 失败或缺 key 时放弃写入(前端对缺失静默跳过, 不显示空卡)。
+    """
+    try:
+        extra = json.loads(claim.extra_fields) if claim.extra_fields else {}
+    except Exception:
+        extra = {}
+    secs = content.get("sections") or {}
+    bar = content.get("conclusion_bar") or {}
+    s = secs.get("summary") or {}
+    coll = secs.get("collateral") or {}
+    cov = coll.get("coverage_vs_interest") or {}
+    risk_sec = secs.get("risk") or {}
+    exec_sec = secs.get("execution_recovery") or {}
+    disposal_sec = secs.get("disposal") or {}
+
+    debtor_type = "个人" if claim.debtor_type == "individual" else "企业"
+    area_parts = []
+    for k, lbl in (("building_area_sqm", "建筑面积"), ("land_area_sqm", "土地面积")):
+        if extra.get(k):
+            area_parts.append(f"{lbl} {extra[k]}㎡")
+    area_text = ("；" + "，".join(area_parts)) if area_parts else ""
+
+    mortgagor = str(extra.get("mortgagor") or "").strip()
+    rank = str(extra.get("mortgage_rank") or "").strip()
+    third_party_txt = ""
+    if mortgagor and mortgagor != (claim.debtor_name or ""):
+        third_party_txt = f"（抵押人为第三方{mortgagor}，非债务人自有财产）"
+    rank_txt = f"；抵押顺位：{rank}" if rank else "；抵押顺位：待核实"
+
+    lines = [
+        f"债务人：{claim.debtor_name or '未知'}（{debtor_type}）"
+        + (f"，所在地域 {extra.get('region')}" if extra.get("region") else ""),
+        f"债权本金：{bar.get('principal_text') or '未知'}"
+        + (f"；利息合计：{bar.get('interest_total_text')}" if bar.get("interest_total_text") else "；利息：未录入（无应计利息展示）"),
+        f"保证：{claim.guarantor or '无保证人'}",
+        f"抵押物：{claim.collateral or '未录入'}{area_text}{third_party_txt}{rank_txt}",
+    ]
+    cov_note = (cov.get("note") or "").strip()
+    if cov_note:
+        lines.append(cov_note)  # 含"抵偿度约 X%"与缺口/余量口径(合规文案直接引用)
+    else:
+        val = coll.get("valuation") or {}
+        lines.append(f"抵押物估值：{_format_valuation(val) if val else '待评估'}（无抵偿度计算）")
+    lines.append(f"综合评级：{s.get('rating') or '—'}")
+    lines.append(f"司法状态：{claim.judicial_status or '待补充'}"
+                 + (f"；执行线索解读：{str(exec_sec.get('ai_note'))[:200]}" if exec_sec.get("ai_note") else ""))
+    core = s.get("core_logic") or []
+    if core:
+        lines.append("核心结论要点：" + "；".join(str(x)[:150] for x in core[:3]))
+    risks = (risk_sec.get("risk") or []) if isinstance(risk_sec.get("risk"), list) else []
+    if risks:
+        lines.append("风险要点：" + "；".join(str(x)[:120] for x in risks[:4]))
+    path_names = [str(p.get("name") or "") for p in (disposal_sec.get("paths") or [])]
+    if path_names:
+        lines.append("可参考处置路径：" + "、".join(x for x in path_names if x))
+    pend = secs.get("pending_supplements") or []
+    pend_names = [str(x.get("field") or "") for x in pend if isinstance(x, dict)]
+    if pend_names:
+        lines.append("尚待核实/补充：" + "、".join(pend_names[:6]))
+
+    system = (
+        "你是不良资产处置领域资深律师，为一份已完成的事实核查尽调报告撰写收尾的『整体评估与总结』。\n"
+        "结构（2-4 个自然段，段落之间观点递进，不设小标题）：\n"
+        "第1段：用一句话给整笔债权定性（担保结构 + 当前阶段 + 回收前景的一句话判断），结论先行；\n"
+        "第2段：展开受偿前景与关键变量——抵押顺位、前序债权、抵偿度与缺口、司法执行进度、处置难度，只讲与本笔债权有关者，风险与应对成对出现；\n"
+        "第3段：行动要旨——下一步应重点推进的事项（呼应处置路径与待核实清单，不复述细节、不并列罗列路径本身）；\n"
+        "可加第4段：用最直白的一句话概括整笔债权的本质，让非专业人士也能看懂。\n"
+        "铁律：只引用随附事实行中的内容，不得编造任何新数字、案号、法院、利率；不得引用法律条文全文（最多半句概括性说法）；"
+        "不得出现买入/转让/收益率类表述（你不提供交易建议）；不用\"AI/模型\"字样；"
+        "不用\"覆盖率\"字样（抵偿度或估值缺口表述按事实行原文口径）；口吻客观克制，像执业律师给客户的收尾小结，不堆砌、不重复前文结论、不写套话。\n"
+        "每段 60-150 个汉字。严格只输出 JSON：{\"paragraphs\": [\"第1段\", \"第2段\", ...]}"
+    )
+    user = json.dumps({"事实行": lines, "要求": "综合以上事实写整体评估与总结"}, ensure_ascii=False)
+    if not settings.deepseek_api_key:
+        return
+    try:
+        r = await chat_json(system, user, temperature=0.4)
+        paras = [str(x).strip() for x in (r.get("paragraphs") or []) if str(x).strip()]
+        if 2 <= len(paras) <= 4 and all(5 <= len(x) <= 400 for x in paras):
+            secs["overall_assessment"] = {"paragraphs": paras}
+    except LLMError:
+        logger.warning("AI overall assessment failed, skip section")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("AI overall assessment error: %s", e)
+
+
 async def build_report_content(claim: Claim, progress: NodeProgress) -> dict:
     """对单个债权执行完整尽调，返回 9 版块报告 JSON。"""
     nodes: dict[str, Any] = {}
@@ -999,6 +1094,8 @@ async def build_report_content(claim: Claim, progress: NodeProgress) -> dict:
     }
     # 2026-09-09 收尾事实增强(第三人抵押/顺位/利息展示/无关法条过滤)
     _augment_mortgage_facts(content, claim)
+    # 2026-09-09 收尾: AI 整体评估与总结(失败自动放弃该版块, 不阻塞报告)
+    await _build_overall_assessment(claim, content)
     return content
 
 

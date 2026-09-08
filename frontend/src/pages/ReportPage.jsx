@@ -24,6 +24,7 @@ const SECTIONS = [
   { key: 'risk', title: '十、风控评估' },
   { key: 'disposal', title: '十一、处置方案' },
   { key: 'pending_supplements', title: '十二、待补充信息' },
+  { key: 'overall_assessment', title: '整体评估与总结' },
   { key: 'supplement_info', title: '补充信息' },
 ]
 
@@ -433,6 +434,21 @@ function PendingSupplementsCard({ data }) {
   )
 }
 
+// 整体评估与总结（报告收尾综述，2026-09-09）
+function OverallAssessmentCard({ data }) {
+  const paras = Array.isArray(data.paragraphs) ? data.paragraphs : []
+  if (paras.length === 0) return null
+  return (
+    <div style={{ padding: '4px 2px' }}>
+      {paras.map((p, i) => (
+        <Paragraph key={i} style={{ fontSize: 14, lineHeight: 1.9, textAlign: 'justify', marginBottom: 12 }}>
+          <Text style={{ color: '#333' }}>{p}</Text>
+        </Paragraph>
+      ))}
+    </div>
+  )
+}
+
 const RENDERERS = {
   summary: SummaryCard,
   reminders: RemindersCard,
@@ -446,6 +462,7 @@ const RENDERERS = {
   risk: RiskCard,
   disposal: DisposalCard,
   pending_supplements: PendingSupplementsCard,
+  overall_assessment: OverallAssessmentCard,
   supplement_info: SupplementInfoCard,
 }
 
@@ -502,6 +519,8 @@ class SectionBoundary extends React.Component {
 }
 
 function SectionCard({ section, data }) {
+  // 整体评估与总结为收尾综述：内容缺失(旧版本报告/生成失败)时整卡隐藏，不显示空卡
+  if (section.key === 'overall_assessment' && !data) return null
   if (!data || (typeof data === 'object' && !Array.isArray(data) && Object.keys(data).length === 0)) {
     return (
       <Card title={section.title} style={{ marginBottom: 16 }} id={section.key}>

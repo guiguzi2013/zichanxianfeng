@@ -697,6 +697,19 @@ def _render_pending(s: list) -> list:
     return []
 
 
+def _render_overall_assessment(s: dict) -> list:
+    """整体评估与总结（2026-09-09 报告收尾综述）：结论先行分段, 无内容则不出现"""
+    paras = [str(x).strip() for x in (s or {}).get("paragraphs") or [] if str(x).strip()]
+    if not paras:
+        return []
+    flow = [_h2("整体评估与总结")]
+    flow.append(Spacer(1, 6))
+    for p in paras:
+        flow.append(Paragraph(_esc(p), _styles()["body"]))
+        flow.append(Spacer(1, 8))
+    return flow
+
+
 def _render_supplement_info(s: dict) -> list:
     flow = [_h2("补充信息")]
     if not s or (not s.get("user_notes") and not s.get("file_count")):
@@ -749,6 +762,7 @@ def generate_report_pdf(report_id: int, content: dict) -> str:
         "一、尽调结论摘要", "二、重要提醒", "三、债权基本情况", "四、法律文件完备性",
         "五、债务人调查", "六、担保人调查", "七、抵押物分析", "八、法律文书与法规依据",
         "九、司法执行与受偿分析", "十、风控评估", "十一、处置方案",
+        "整体评估与总结",
     ]
     flow.append(NextPageTemplate("body"))
     flow.append(PageBreak())
@@ -771,6 +785,7 @@ def generate_report_pdf(report_id: int, content: dict) -> str:
     flow.extend(_render_risk(sections.get("risk") or {}))
     flow.extend(_render_disposal(sections.get("disposal") or {}))
     flow.extend(_render_pending(sections.get("pending_supplements") or []))
+    flow.extend(_render_overall_assessment(sections.get("overall_assessment") or {}))
     flow.extend(_render_supplement_info(sections.get("supplement_info") or {}))
 
     # 免责声明

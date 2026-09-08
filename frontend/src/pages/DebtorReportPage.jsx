@@ -158,7 +158,7 @@ export default function DebtorReportPage() {
 
       <Divider />
       <Text type="secondary" style={{ fontSize: 12, display: 'block', textAlign: 'center' }}>
-        本报告由 NPL CN 平台基于企查查公开数据生成，数据截至 {report.queried_at}，仅供参考，不构成投资建议。
+        本报告基于公开工商登记信息整理，数据截至 {report.queried_at}，仅供参考，不构成投资建议。
       </Text>
     </div>
   )

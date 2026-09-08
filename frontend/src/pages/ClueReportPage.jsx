@@ -162,7 +162,7 @@ export default function ClueReportPage() {
 
       <Divider />
       <Text type="secondary" style={{ fontSize: 12, display: 'block', textAlign: 'center' }}>
-        本报告由 NPL CN 平台基于公开渠道信息生成，数据截至 {report.queried_at}，仅供参考，不构成投资建议。
+        本报告基于公开渠道信息（司法公开/信用公示/拍卖平台等）整理，数据截至 {report.queried_at}，仅供参考，不构成投资建议。
       </Text>
     </div>
   )

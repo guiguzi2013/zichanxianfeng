@@ -64,7 +64,7 @@ def generate_clue_report_pdf(company: str, sections: list, meta: dict, out_path:
     # 免责
     flow.append(Spacer(1, 20))
     flow.append(Paragraph(_esc(
-        "本报告由 NPL CN 平台基于公开渠道（司法公开 / 信用公示 / 拍卖平台）信息生成，数据截至 %s，"
+        "本报告基于公开渠道（司法公开 / 信用公示 / 拍卖平台）信息整理，数据截至 %s，"
         "仅供参考，不构成投资建议或尽调结论。信息准确性以官方登记为准，重大决策请结合工商、司法等官方渠道复核。" % (queried_at or "查询当日")),
         st["note"]))
 

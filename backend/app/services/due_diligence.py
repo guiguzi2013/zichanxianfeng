@@ -165,12 +165,22 @@ async def _node2_judicial(claim: Claim) -> dict:
                     ]
                 result["risk_factors"] = risk_factors
                 factor_count = {f["label"]: f["count"] for f in risk_factors}
+                # 司法风险解读(2026-09-09): 不直接透传企查查工具摘要(含"全量扫描N项风险因子/
+                # 明细工具"等内部口径), 改为按命中清单组装自然语言
+                hit_desc = "、".join(f"{k} {v}条" for k, v in factor_count.items() if v)
+                miss = [x for x in ("被执行人", "失信信息") if factor_count.get(x, 0) == 0]
+                if hit_desc:
+                    note = f"已核查司法与工商公开信息：检出{hit_desc}。"
+                    if miss:
+                        note += f"{'、'.join(miss)}未检出记录。"
+                else:
+                    note = "已核查司法与工商公开信息，未检出被执行、失信等风险记录。"
                 result["judicial_risk"] = {
                     "source": "企查查",
                     "execution_found": factor_count.get("被执行人", 0) > 0,
                     "dishonest_found": factor_count.get("失信信息", 0) > 0,
                     "factors": factor_count,
-                    "note": scan.get("data", {}).get("摘要") or "未发现司法风险记录",
+                    "note": note,
                     "need_manual_verify": False,
                 }
                 return result
@@ -210,32 +220,30 @@ async def _node3_legal(claim: Claim) -> dict:
     《执行异议复议规定》等），展示"依据《XX法》"字样；无匹配则不输出——
     绝不写"法规依据由系统生成"（易被误读为系统凭空造法）。
     """
-    # 2026-09-05：用户上传过判决书/裁判材料时，不写"未检索到相关判决书"（那条针对企查查检索，
-    # 与用户材料无关，会自相矛盾）；改按用户材料说明
+    # 2026-09-09: 只有材料中确实载明裁判特征(案号/裁判结果)才按裁判文书口径表述;
+    # 仅"有 word 附件(doc)"不构成判决书(曾误把三户债权清单 docx 说成"您上传的判决书")
     extra = {}
     try:
         extra = json.loads(claim.extra_fields) if claim.extra_fields else {}
     except Exception:
         extra = {}
-    has_user_doc = bool(extra.get("case_number") or extra.get("judgment_result") or claim.source_type == "doc")
-    if has_user_doc:
-        case_no = extra.get("case_number")
-        jr = extra.get("judgment_result")
+    case_no = str(extra.get("case_number") or "").strip()
+    jr = str(extra.get("judgment_result") or "").strip()
+    has_judgment_doc = bool(case_no or jr)
+    if has_judgment_doc:
         note = []
         if case_no:
-            note.append(f"已根据您上传的判决书（案号 {case_no}）分析")
+            note.append(f"债权材料载明裁判文书（案号 {case_no}），已结合相关裁判信息分析")
         elif jr:
-            note.append(f"已根据您上传的裁判材料分析（{jr}）")
-        else:
-            note.append("已根据您上传的判决书/裁定书等材料分析")
+            note.append(f"债权材料载明裁判情况（{jr}），已结合分析")
         if not extra.get("interest_method"):
-            note.append("材料中未见明确的利息计算条款，如需精确计息可在报告页补充")
+            note.append("材料未载明计息方式细节，如需精确计息可补充裁判文书原文")
         note_text = "；".join(note)
         result = {
             "documents": {
                 "found": True,
-                "items": [{"item": "用户上传判决书/材料", "status": "已采用",
-                           "note": f"案号：{case_no}" if case_no else "已作为本息与案情分析依据"}],
+                "items": [{"item": "裁判文书/裁定材料", "status": "已载明",
+                           "note": f"案号：{case_no}" if case_no else "已结合裁判情况分析"}],
                 "not_found_note": note_text,
             },
         }
@@ -243,7 +251,7 @@ async def _node3_legal(claim: Claim) -> dict:
         result = {
             "documents": {
                 "found": False,
-                "not_found_note": "未检索到相关判决书，本息为估算，建议上传补充材料",
+                "not_found_note": "材料未载明判决书/裁定文书，本息按材料信息估算（详见债权基本情况）；补充裁判文书后可精确计息",
             },
         }
     statutes = _match_statutes(claim)
@@ -310,8 +318,9 @@ def _match_statutes(claim: Claim) -> list[dict]:
             if d.id in used or not d.keywords:
                 continue
             kw = d.keywords.split(",")
-            # 内部经验/行业常识类不展示为"法规依据"
-            if d.doc_no == "内部经验":
+            # 内部经验/行业常识/平台内部规则/术语词典等一律不展示为"法规依据"(2026-09-09:
+            # 曾只拦"内部经验", 漏放"内部规则/内部词典"类, 把平台约定当法条写进了报告)
+            if str(d.doc_no or "").startswith("内部"):
                 continue
             hit = False
             for r in rules:
@@ -593,11 +602,10 @@ def _node5_interest(claim: Claim) -> dict:
     # 判决书利率（情况②）
     judgment_rate = extra.get("judgment_rate")
     penalty_per_day = extra.get("penalty_per_day")
-    # 2026-09-05：用户上传了判决书/裁判材料（有案号/裁判结果/利率）→ 提示语与估算口径随之调整，
-    # 不再写"未检索到判决书"（那是对应企查查扫描，与用户上传材料无关）
-    has_uploaded_judgment = bool(
+    # 2026-09-09: 仅当材料载明裁判特征(案号/裁判结果/判决利率)才按裁判文书口径提示;
+    # 曾把 source_type=='doc'(任意 word 材料)一律当作"上传了判决书", 虚构陈述
+    has_judgment_ref = bool(
         extra.get("case_number") or extra.get("judgment_result") or judgment_rate
-        or (claim.source_type == "doc")
     )
     has_judgment = bool(judgment_rate and float(judgment_rate) > 0)
 
@@ -625,8 +633,8 @@ def _node5_interest(claim: Claim) -> dict:
                     "mode": result.calculation_mode,
                     "items": result.items,
                     "total_cents": result.total_cents,
-                    # 依据用户上传判决书计算（rate 在 items note 中体现）
-                    "basis_note": f"按您上传判决书确定的利率（年 {float(judgment_rate) * 100:g}%）计至 {today.isoformat()}（报告生成当日）",
+                    # 依据债权材料载明的判决利率计算（rate 在 items note 中体现）
+                    "basis_note": f"按债权材料载明的判决利率（年 {float(judgment_rate) * 100:g}%）计至 {today.isoformat()}（报告生成当日）",
                     "basis_label": "截止今日",
                     "start_date": start.isoformat(),
                     "end_date": today.isoformat(),
@@ -716,21 +724,24 @@ def _node5_interest(claim: Claim) -> dict:
 
     # ③ 无任何计息信息：直接用录入利息
     total = principal + (known_interest or 0) if known_interest else principal
-    # 2026-09-05：用户上传了判决书但未能识别出利率/起算日 → 明确说明，不再写笼统"无计息信息"
-    if has_uploaded_judgment:
+    # 材料载明裁判文书但未识别出利率/起算日 → 如实说明(不按无信息笼统处理, 也不虚构判决书内容)
+    if has_judgment_ref:
+        case_no = str(extra.get("case_number") or "").strip()
+        if case_no:
+            basis_note = (f"债权材料载明案号 {case_no}，但未载明利率与计息起算信息，"
+                          "利息暂按估算口径列示")
+        else:
+            basis_note = "债权材料载明裁判情况，但未载明利率与计息起算信息，利息暂按估算口径列示"
         return {
             "mode": "no_info",
             "items": [
                 {"name": "本金", "amount_cents": principal, "note": ""},
                 {"name": "利息", "amount_cents": known_interest or 0,
-                 "note": "判决书载明利息" if known_interest else ""},
+                 "note": "材料载明利息" if known_interest else ""},
             ] if known_interest else [{"name": "本金", "amount_cents": principal, "note": ""}],
             "total_cents": total,
-            "basis_note": ("已识别您上传的判决书（案号 %s），但未识别出明确的利率/计息起算信息，"
-                           "暂按判决书载明利息列示；如需按利率精确续算，请在报告页补充计息条款后重新生成。"
-                           % extra.get("case_number")) if extra.get("case_number")
-                          else "已识别您上传的判决书，但未识别出明确的利率/计息起算信息，暂按 LPR 估算；可在报告页补充判决书计息条款后重新生成",
-            "basis_label": "判决书载明" if extra.get("case_number") else "估算",
+            "basis_note": basis_note,
+            "basis_label": "估算",
             "end_date": today.isoformat(),
             "has_judgment": False,
             "source_judgment": True,
@@ -743,8 +754,8 @@ def _node5_interest(claim: Claim) -> dict:
             {"name": "利息", "amount_cents": known_interest or 0, "note": "计息至债权发布日（权威机构/银行/AMC 发布时点）"},
         ] if known_interest else [{"name": "本金", "amount_cents": principal, "note": ""}],
         "total_cents": total,
-        "basis_note": "因无计息信息，截止今日利息无法估算，可以本页底部补充",
-        "basis_label": "截止债权发布日",
+        "basis_note": "材料未载明计息信息，暂无法测算利息（当前仅列示本金）；补充载明利率与起算日的材料后可精确计算",
+        "basis_label": "估算",
         "end_date": today.isoformat(),
         "has_judgment": False,
         "validation": _interest_validation(principal, known_interest),
@@ -1090,7 +1101,7 @@ async def build_report_content(claim: Claim, progress: NodeProgress) -> dict:
             "disposal": await _build_disposal_section(claim, nodes),  # 多路径处置方案
             "pending_supplements": _build_pending_supplements(claim, nodes),  # 待补充信息清单
         },
-        "disclaimer": "本报告由 NPL CN 平台基于公开信息和系统分析自动生成，仅供参考，不构成投资建议。报告中的估值基于公开市场数据粗估，不替代专业评估机构出具的正式评估报告。投资决策请结合专业律师意见和实地尽调结果。",
+        "disclaimer": "本报告基于公开信息与债权材料整理，仅供参考，不构成投资建议。报告中的估值基于公开市场数据粗估，不替代专业评估机构出具的正式评估报告。投资决策请结合专业律师意见和实地尽调结果。",
     }
     # 2026-09-09 收尾事实增强(第三人抵押/顺位/利息展示/无关法条过滤)
     _augment_mortgage_facts(content, claim)
@@ -1277,7 +1288,7 @@ async def _build_disposal_section(claim: Claim, nodes: dict) -> dict:
         "paths": paths,  # 多路径并列，不标记"推荐"，用户自选
         "actions": plan.get("actions", []),  # 操作步骤指引
         "priority_text": plan.get("priority_text", "中"),
-        "note": "以上处置路径由系统根据尽调数据自动生成，并列供参考；具体策略请结合专业律师意见，不构成投资建议。",
+        "note": "以上处置路径并列供参考，各路径的实际可行性需结合债权进展、抵押顺位与前序债权情况判断；具体策略请结合专业律师意见，不构成投资建议。",
     }
     # 抵偿度联动(2026-09-09 口径翻转)：抵偿度<100%(估值低于本息) → 提示处置缺口
     coverage = (nodes.get("collateral") or {}).get("coverage_vs_interest") or {}

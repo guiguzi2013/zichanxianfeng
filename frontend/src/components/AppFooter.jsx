@@ -39,7 +39,7 @@ export default function AppFooter() {
         <div className="footer-col">
           <div className="footer-col-title">免责声明</div>
           <p style={{ lineHeight: 1.7 }}>
-            本平台为信息聚合与尽调分析工具，所有报告由系统基于公开信息和 系统分析自动生成，仅供参考，不构成投资建议。
+            本平台为不良资产信息聚合与尽调分析工具。站内报告基于公开信息与材料整理，仅供参考，不构成投资建议。
           </p>
         </div>
       </div>

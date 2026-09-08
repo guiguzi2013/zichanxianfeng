@@ -78,21 +78,19 @@ function SummaryCard({ data }) {
   )
 }
 
+// 重要提醒（2026-09-09: 去规则引擎痕迹——不显示 rule_id/触发条件列, 自然语言呈现）
 function RemindersCard({ data }) {
   const items = data.items || []
   if (items.length === 0) return <Text type="secondary">未触发特殊提醒</Text>
   return (
-    <Table
-      size="small"
-      rowKey="rule_id"
-      pagination={false}
-      dataSource={items}
-      columns={[
-        { title: '规则', dataIndex: 'rule_id', width: 80, render: (v) => <Tag color="blue">{v}</Tag> },
-        { title: '触发条件', dataIndex: 'trigger', width: 220 },
-        { title: '提醒内容', dataIndex: 'content' },
-      ]}
-    />
+    <div>
+      {items.map((it, i) => (
+        <div key={it.rule_id || i} style={{ marginBottom: 12 }}>
+          <Text strong style={{ fontSize: 13 }}>{it.trigger}</Text>
+          <div style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 2, lineHeight: 1.7 }}>{it.content}</div>
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -313,7 +311,7 @@ function DisposalCard({ data }) {
       <Alert
         type="info"
         showIcon
-        message="以下处置路径由系统根据尽调数据自动生成，并列供参考；用户自行判断选择，不构成投资建议。"
+        message="以下处置路径并列供参考，各路径的实际可行性需结合债权进展、抵押顺位与前序债权情况判断；具体策略请结合专业律师意见，不构成投资建议。"
         style={{ marginBottom: 12 }}
       />
       {/* 多路径并列（形式A）*/}
@@ -727,7 +725,7 @@ export default function ReportPage() {
   }
 
   // ---- 版本切换 ----
-  const SOURCE_LABEL = { ai: '系统生成', supplement: '补充材料触发', manual: '手动回退' }
+  const SOURCE_LABEL = { ai: '首次生成', supplement: '补充材料', manual: '手动回退' }
 
   const onSelectVersion = async (v) => {
     if (v === report.version) {
@@ -776,7 +774,7 @@ export default function ReportPage() {
             <Select
               value={viewing ? viewing.version : report.version}
               style={{ width: 180 }}
-              tooltip="版本说明：v1 为首次系统生成；每次上传补充材料（判决书/评估报告等）或补充信息后系统自动重新生成，版本+1，历史版本可查看/回退。"
+              tooltip="版本说明：每次补充材料（判决书/评估报告等）或补充信息后重新生成报告，版本+1；历史版本可查看/回退。"
               onChange={onSelectVersion}
               options={[
                 { value: report.version, label: `v${report.version}（当前）` },
@@ -849,7 +847,7 @@ export default function ReportPage() {
           {/* 免责声明 */}
           <Card style={{ marginTop: 16, background: '#f5f7fa' }}>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              本报告由 NPL CN 平台基于公开信息和系统分析自动生成，仅供参考，不构成投资建议。
+              本报告基于公开信息与债权材料整理，仅供参考，不构成投资建议。
               报告中的估值基于公开市场数据粗估，不替代专业评估机构出具的正式评估报告。
               投资决策请结合专业律师意见和实地尽调结果。
             </Text>

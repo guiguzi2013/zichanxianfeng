@@ -339,8 +339,8 @@ def estimate_land_factory(collateral_text: str, extra: dict | None = None) -> di
             "conservative_cents": cons,
             "neutral_cents": neut,
             "optimistic_cents": opti,
-            "reference_cents": neut,  # 工业主参考值 = 中间值（成本法）
-            "reference_label": "主参考估值（工业类取中间值）",
+            "reference_cents": neut,  # 工业主参考值 = 中间值（成本法，内部口径不外显）
+            "reference_label": "主参考估值",
             "area_sqm": round((land_area or 0) + (building_area or 0), 2),
             "collateral_type": "工业（土地+建筑）" if (land_part and building_part) else "工业（土地）" if land_part else "工业（建筑）",
             "unit_price_range": "土地出让价 + 建筑建安造价（见成本法明细）",
@@ -403,12 +403,12 @@ def _market_estimate(text: str, ctype: str, extra: dict) -> dict:
     optimistic = int(area * hi * 100)
     # 主参考值取档（经济下行口径，用户确认 2026-08-25）：
     #   商业/商铺/写字楼 → 保守（最低价）；住宅/别墅 → 中间值；工业（成本法）→ 中间值
+    # 2026-09-09: 取档策略属平台内部约定, 不外显(原"主参考估值(商业类取最低价)"等措辞清除)
     if label in ("商业", "商铺", "写字楼"):
         reference = conservative
-        reference_label = "主参考估值（商业类取最低价）"
     else:
         reference = neutral
-        reference_label = "主参考估值（住宅类取中间值）"
+    reference_label = "主参考估值"
     return {
         "method": "market",
         "valuation": {
@@ -422,5 +422,5 @@ def _market_estimate(text: str, ctype: str, extra: dict) -> dict:
             "unit_price_range": f"{lo}~{hi}元/㎡",
             "estimate_note": "按同类型公开市场单价区间粗估，市场价格无法确定，不替代专业评估报告",
         },
-        "notes": [f"{label} {area:g}㎡ × {lo}~{hi}元/㎡（市场价区间粗估；主参考值取{'最低价' if reference == conservative else '中间值'}）"],
+        "notes": [f"{label} {area:g}㎡，单价参考 {lo}~{hi}元/㎡（按同类型公开市场行情粗估）"],
     }

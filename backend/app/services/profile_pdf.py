@@ -122,8 +122,8 @@ def generate_profile_pdf(company: str, sections: list, meta: dict, out_path: str
     # 免责
     flow.append(Spacer(1, 20))
     flow.append(Paragraph(_esc(
-        "本报告由 NPL CN 平台基于企查查公开数据自动生成，数据截至 %s，仅供参考，不构成投资建议或尽调结论。"
-        "信息准确性以企查查/官方登记为准，重大决策请结合工商、司法等官方渠道复核。" % (queried_at or "查询当日")),
+        "本报告基于公开工商登记信息整理，数据截至 %s，仅供参考，不构成投资建议或尽调结论。"
+        "信息准确性以官方登记为准，重大决策请结合工商、司法等官方渠道复核。" % (queried_at or "查询当日")),
         st["note"]))
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)

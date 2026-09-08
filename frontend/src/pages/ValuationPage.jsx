@@ -69,7 +69,7 @@ export default function ValuationPage({ mode = 'industrial' }) {
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 16px 48px' }}>
       <Title level={3} style={{ marginBottom: 4 }}>{isCommercial ? '商业房产估价' : '土地厂房估价'}</Title>
       <Text type="secondary">{isCommercial
-        ? '商业房产按市场价区间粗估，取最低价（经济下行口径）。估算结果仅供参考，不替代专业评估。'
+        ? '商业房产按同类公开市场单价区间粗估，结果仅供参考，不替代专业评估。'
         : '成本法粗估：土地出让价 + 建筑建安造价 × 折旧（20年/残值5%）。估算结果仅供参考，不替代专业评估。'}</Text>
 
       <Card style={{ marginTop: 16 }}>
@@ -143,14 +143,14 @@ export default function ValuationPage({ mode = 'industrial' }) {
           icon={<BulbOutlined />}
           message="估价说明"
           description={isCommercial
-            ? '商业房产（商铺/商业网点/写字楼）按公开市场单价区间粗估（15000~50000元/㎡），取最低价作为主参考（经济下行口径）。市场价波动大，不替代专业评估报告。'
-            : '土地按各地出让价区间粗估（沿海 600~1200元/㎡、内地 450~750元/㎡、未知地区取全国中值）；建筑按建安造价粗估（轻钢600~1000、重钢1000~1500、砖混800~1200元/㎡）；折旧按房屋建筑物 20 年、残值 5% 直线折旧（年 4.75%）。只有土地算土地，有土地+建筑则合计。具体参数后期将按公示数据细化。'}
+            ? '商业房产（商铺/商业网点/写字楼）按同类公开市场单价区间粗估（15000~50000元/㎡），市场价波动大，不替代专业评估报告。'
+            : '土地按各地出让价区间粗估（沿海 600~1200元/㎡、内地 450~750元/㎡、未知地区按全国均价参考）；建筑按建安造价粗估（轻钢600~1000、重钢1000~1500、砖混800~1200元/㎡）；折旧按房屋建筑物 20 年、残值 5% 直线折旧（年 4.75%）。只有土地算土地，有土地+建筑则合计。'}
         />
 
         {/* 证件上传（房产证/土地证存档，供人工核对面积与建成年份） */}
         <Card size="small" title={<span><FileProtectOutlined style={{ color: 'var(--primary)', marginRight: 6 }} />补充证件（可选）</span>} style={{ marginTop: 16 }}>
           <Text type="secondary" style={{ fontSize: 12.5, display: 'block', marginBottom: 8 }}>
-            上传房产证 / 土地证照片或扫描件，系统存档供人工核对土地面积、建筑面积与建成年份，提升估值准确性（当前仅存档，不自动解析）。
+            上传房产证 / 土地证照片或扫描件，存档供人工核对土地面积、建筑面积与建成年份，提升估值准确性。
           </Text>
           <Upload
             multiple

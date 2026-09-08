@@ -416,7 +416,7 @@ async def profile_query(req: ProfileQueryRequest, user: User = Depends(get_curre
     # AI 律师式润色(2026-09-08): 司法与合规风险 AI 概述; 失败/演示模式保留模板
     try:
         from ..services.advice_writer import build_context, polish_report
-        sections = await polish_report(sections, build_context(result))
+        sections = await polish_report(sections, build_context(result), kind="profile")
     except Exception:  # noqa: BLE001
         logger.exception("debtor profile polish failed for %s", company)
 

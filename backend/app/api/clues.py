@@ -601,7 +601,7 @@ async def clue_query_report(req: ClueQueryRequest, user: User = Depends(get_curr
     try:
         from ..services.advice_writer import build_context, polish_report
         ctx = build_context(result)
-        sections = await polish_report(sections, ctx)
+        sections = await polish_report(sections, ctx, kind="clue")
     except Exception:  # noqa: BLE001
         logger.exception("clue report polish failed for %s", company)
 

@@ -262,7 +262,7 @@ async def _regenerate_profile(row) -> tuple[bool, str | None]:
         if not (reg.get("ok") and isinstance(reg_d, dict) and str(reg_d.get("企业名称") or "").strip()):
             return False, "未查询到该名称的企业登记信息，未能重新生成。"
         sections = _build_sections(result)
-        sections = await polish_report(sections, build_context(result))
+        sections = await polish_report(sections, build_context(result), kind="profile")
         summary = _summary_of(result)
         content = {"sections": sections, "summary": summary,
                    "raw": {k: v for k, v in (result.get("biz") or {}).items()},
@@ -309,7 +309,7 @@ async def _regenerate_clue(row) -> tuple[bool, str | None]:
         if ipr:
             result["ipr"] = ipr
         sections = build_sections(result)
-        sections = await polish_report(sections, build_context(result))
+        sections = await polish_report(sections, build_context(result), kind="clue")
         summary = build_summary(result)
         content = {"sections": sections, "summary": summary,
                    "raw": {k: v for k, v in (result.get("biz") or {}).items()},

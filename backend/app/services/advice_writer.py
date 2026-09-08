@@ -25,7 +25,23 @@ _SYSTEM = """你是一位资深不良资产处置律师, 正在为一家不良�
 3. 不编造、不引用任何具体法律法规条文(可用"依法""司法程序"等概括表述), 不预测处置结果;
 4. 禁止出现: 企查查、数据源、积分、缓存、调用、系统、AI、模型 等内部或技术词汇; 不使用"据公开信息""数据截至"之外的免责腔;
 5. 每个主题段落独立成文, 语言要因企业而异——数据不同, 表述与侧重必须不同; 避免空泛套话;
-6. 段落 120~280 字, 直接可用, 不要标题编号、不要解释你在做什么。"""
+6. 段落 120~280 字, 直接可用, 不要标题编号、不要解释你在做什么;
+7. 表达方法(2026-09-08 借鉴律师平台冗长报告教训后固化的格式纪律, 代码强制):
+   a. 每条先给一句话结论/判断, 再给依据与动作——结论先行, 禁止先铺陈一大段再总结;
+   b. 只谈与本企业查询结果相关的要点, 禁止罗列无关法律情形、整段判例或法规全文(一律用"依法/按司法实践"概括);
+      同一要点只论证一次, 不重复展开;
+   c. 风险类提示必须与应对方式成对出现(先点风险, 紧跟处置/核实动作);
+   d. 段落末尾可用一句最直白的话概括要点(像向客户解释), 全段不堆砌生僻表述。"""
+
+# 报告类型专属附加约束(代码固化, 与模型记忆无关; 每份报告生成时强制注入)
+_KIND_RULES = {
+    "clue": ("\n【本段落在「财产线索报告」(追债执行语境)中】: 建议必须落到下一步可执行的动作(先后步骤), "
+             "必要时并列多条可选处置路径并说明各自适用情形; 突出可立即办理的事项。"),
+    "profile": ("\n【本段落在「企业速览」报告(中性画像语境)中】: 该报告用于了解企业底细(含交易对手/合作前核验场景), "
+                "请以客观画像式结论行文(\"该企业核心特征…\"), 风险用\"建议核验\"式提示并给出核验途径; "
+                "严禁输出处置/拍卖/追索/收购路径、保全查封方案、操作 SOP、行动清单等追债执行指引。"),
+    "dd": "",  # 尽调报告分析段由 due_diligence 内嵌 prompt 直接生成, 不走本通道
+}
 
 # 段落要点(供 LLM 内化语义, 禁止复述原文; 仅为"必须覆盖"清单, 措辞由模型按数据重组)
 _IPR_POINTS = {
@@ -58,9 +74,10 @@ def _slot_point(slot: str, fallback: str) -> str:
     return base
 
 
-async def polish_report(sections: list, context_txt: str) -> list:
+async def polish_report(sections: list, context_txt: str, kind: str = "clue") -> list:
     """就地润色 sections 的 note(按 note_slot); 失败/无槽位/演示模式 → 原样返回。
 
+    kind: clue(财产线索)/profile(企业速览)——决定注入哪类专属约束(代码固化, 见 _KIND_RULES)
     context_txt: 该企业查询结果摘要(维度计数/代表条目/风险命中/权利主张统计等)。
     """
     slots = _slots_needed(sections)
@@ -76,6 +93,7 @@ async def polish_report(sections: list, context_txt: str) -> list:
         if settings.llm_mock or not settings.deepseek_api_key:
             return sections  # 演示/未配 key: 保留模板
 
+        system = _SYSTEM + (_KIND_RULES.get(kind) or "")
         slot_list = "、".join(slots.keys())
         need = "\n".join(f"- {k}: 参考要点 → {_slot_point(k, v)}" for k, v in slots.items())
         user = (
@@ -84,7 +102,7 @@ async def polish_report(sections: list, context_txt: str) -> list:
             + "\n\n请输出 JSON 对象, 键为上述段落标识(" + slot_list + "), 值为该段建议文本;"
               "只输出确有分析价值的段落; 不要输出空串键。"
         )
-        obj = await chat_json(_SYSTEM, user, temperature=0.5)
+        obj = await chat_json(system, user, temperature=0.5)
         if not isinstance(obj, dict):
             return sections
         replaced = 0
@@ -93,7 +111,7 @@ async def polish_report(sections: list, context_txt: str) -> list:
             if slot and isinstance(obj.get(slot), str) and obj[slot].strip():
                 sec["note"] = obj[slot].strip()
                 replaced += 1
-        logger.info("polish_report: %d/%d slots replaced", replaced, len(slots))
+        logger.info("polish_report(kind=%s): %d/%d slots replaced", kind, replaced, len(slots))
     except LLMError as e:
         logger.warning("polish_report LLM 失败, 保留模板: %s", e)
     except Exception as e:  # noqa: BLE001
